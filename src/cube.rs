@@ -114,7 +114,8 @@ mod tests {
 
     fn bloque() -> Cube {
         // Ocupa de (-0.5, -0.5, -5.5) a (0.5, 0.5, -4.5)
-        Cube::block(Vec3::new(-0.5, -0.5, -5.5), Material::new(Color::new(1.0, 1.0, 1.0)))
+        let material = Material::new(Color::new(1.0, 1.0, 1.0), 10.0, [1.0, 0.0, 0.0, 0.0], 1.0);
+        Cube::block(Vec3::new(-0.5, -0.5, -5.5), material)
     }
 
     #[test]

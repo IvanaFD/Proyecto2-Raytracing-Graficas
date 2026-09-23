@@ -28,6 +28,11 @@ impl Vec3 {
         }
         *self / length
     }
+
+    // Refleja el vector respecto a la normal: R = I - 2(I.N)N
+    pub fn reflect(&self, normal: &Vec3) -> Vec3 {
+        *self - *normal * (2.0 * self.dot(normal))
+    }
 }
 
 impl Add for Vec3 {
@@ -106,6 +111,13 @@ mod tests {
     fn normalize_da_largo_uno() {
         let n = Vec3::new(3.0, -7.0, 12.0).normalize();
         assert!((n.length() - 1.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn reflect_invierte_la_componente_normal() {
+        let incidente = Vec3::new(1.0, -1.0, 0.0);
+        let normal = Vec3::new(0.0, 1.0, 0.0);
+        assert_eq!(incidente.reflect(&normal), Vec3::new(1.0, 1.0, 0.0));
     }
 
     #[test]

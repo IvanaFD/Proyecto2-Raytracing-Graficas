@@ -61,7 +61,7 @@ mod tests {
         Sphere {
             center,
             radius: 1.0,
-            material: Material::new(Color::new(1.0, 1.0, 1.0)),
+            material: Material::new(Color::new(1.0, 1.0, 1.0), 10.0, [1.0, 0.0, 0.0, 0.0], 1.0),
         }
     }
 
