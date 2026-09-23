@@ -1,3 +1,5 @@
+use std::f32::consts::PI;
+
 use crate::material::Material;
 use crate::ray_intersect::{Intersect, RayIntersect};
 use crate::vec3::Vec3;
@@ -42,7 +44,11 @@ impl RayIntersect for Sphere {
         let point = *ray_origin + *ray_direction * t;
         let normal = (point - self.center).normalize();
 
-        Intersect::new(point, normal, t, self.material)
+        // Mapeo esferico: u da la vuelta en el ecuador, v va de polo a polo
+        let u = 0.5 + normal.z.atan2(normal.x) / (2.0 * PI);
+        let v = 0.5 - normal.y.asin() / PI;
+
+        Intersect::new(point, normal, t, (u, v), self.material)
     }
 }
 

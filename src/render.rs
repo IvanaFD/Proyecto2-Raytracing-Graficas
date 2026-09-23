@@ -1,7 +1,6 @@
 use crate::color::Color;
 use crate::framebuffer::Framebuffer;
 use crate::ray_intersect::{Intersect, RayIntersect};
-use crate::sphere::Sphere;
 use crate::vec3::Vec3;
 
 const SKY_HORIZON: Color = Color::from_rgb(200, 225, 255);
@@ -12,7 +11,14 @@ fn sky_color(direction: &Vec3) -> Color {
     SKY_HORIZON.lerp(&SKY_ZENITH, t)
 }
 
-pub fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, objects: &[Sphere]) -> Color {
+// Sombreado fijo por cara como el Minecraft clasico (arriba 1.0, lados 0.8
+// y 0.7, abajo 0.6) para distinguir las caras antes de tener luces.
+// Se reemplaza por la iluminacion de verdad en la fase 6
+fn face_shade(normal: &Vec3) -> f32 {
+    0.8 + 0.2 * normal.y - 0.1 * normal.x.abs()
+}
+
+pub fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, objects: &[Box<dyn RayIntersect>]) -> Color {
     let mut intersect = Intersect::empty();
     // Distancia del impacto mas cercano encontrado hasta ahora
     let mut zbuffer = f32::INFINITY;
@@ -29,10 +35,10 @@ pub fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, objects: &[Sphere]) -> 
         return sky_color(ray_direction);
     }
 
-    intersect.material.diffuse
+    intersect.material.diffuse * face_shade(&intersect.normal)
 }
 
-pub fn render(framebuffer: &mut Framebuffer, objects: &[Sphere]) {
+pub fn render(framebuffer: &mut Framebuffer, objects: &[Box<dyn RayIntersect>]) {
     let width = framebuffer.width as f32;
     let height = framebuffer.height as f32;
     let aspect_ratio = width / height;

@@ -8,16 +8,25 @@ pub struct Intersect {
     pub point: Vec3,
     pub normal: Vec3,
     pub distance: f32,
+    // Coordenadas de textura en [0,1]; se usan desde la fase 10
+    pub uv: (f32, f32),
     pub is_intersecting: bool,
     pub material: Material,
 }
 
 impl Intersect {
-    pub fn new(point: Vec3, normal: Vec3, distance: f32, material: Material) -> Self {
+    pub fn new(
+        point: Vec3,
+        normal: Vec3,
+        distance: f32,
+        uv: (f32, f32),
+        material: Material,
+    ) -> Self {
         Intersect {
             point,
             normal,
             distance,
+            uv,
             is_intersecting: true,
             material,
         }
@@ -28,6 +37,7 @@ impl Intersect {
             point: Vec3::default(),
             normal: Vec3::default(),
             distance: f32::INFINITY,
+            uv: (0.0, 0.0),
             is_intersecting: false,
             material: Material::default(),
         }
