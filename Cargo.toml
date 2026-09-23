@@ -1,0 +1,13 @@
+[package]
+name = "Proyecto2-Raytracing-Graficas"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Solo para abrir la ventana, mostrar el framebuffer y leer el teclado
+raylib = "5.5"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
