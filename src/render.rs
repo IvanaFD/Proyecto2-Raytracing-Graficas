@@ -1,12 +1,11 @@
 use crate::color::Color;
 use crate::framebuffer::Framebuffer;
-use crate::ray_intersect::RayIntersect;
+use crate::ray_intersect::{Intersect, RayIntersect};
 use crate::sphere::Sphere;
 use crate::vec3::Vec3;
 
 const SKY_HORIZON: Color = Color::from_rgb(200, 225, 255);
 const SKY_ZENITH: Color = Color::from_rgb(60, 120, 215);
-const OBJECT_COLOR: Color = Color::from_rgb(95, 159, 53);
 
 fn sky_color(direction: &Vec3) -> Color {
     let t = 0.5 * (direction.y + 1.0);
@@ -14,13 +13,23 @@ fn sky_color(direction: &Vec3) -> Color {
 }
 
 pub fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, objects: &[Sphere]) -> Color {
+    let mut intersect = Intersect::empty();
+    // Distancia del impacto mas cercano encontrado hasta ahora
+    let mut zbuffer = f32::INFINITY;
+
     for object in objects {
-        if object.ray_intersect(ray_origin, ray_direction) {
-            return OBJECT_COLOR;
+        let hit = object.ray_intersect(ray_origin, ray_direction);
+        if hit.is_intersecting && hit.distance < zbuffer {
+            zbuffer = hit.distance;
+            intersect = hit;
         }
     }
 
-    sky_color(ray_direction)
+    if !intersect.is_intersecting {
+        return sky_color(ray_direction);
+    }
+
+    intersect.material.diffuse
 }
 
 pub fn render(framebuffer: &mut Framebuffer, objects: &[Sphere]) {
