@@ -10,20 +10,71 @@ const SKY_ZENITH: Color = Color::from_rgb(60, 120, 215);
 // Luz minima que llega a todos lados, para que lo que no ve la luz no quede negro
 const AMBIENT: f32 = 0.15;
 
+// Cuanto se despega el origen del shadow ray de la superficie, para que no
+// choque con la misma cara de la que sale ("shadow acne")
+const SHADOW_BIAS: f32 = 1e-3;
+
+// Ancho del contorno de cada bloque: 1 texel de una textura de 16x16
+const BLOCK_EDGE: f32 = 1.0 / 16.0;
+const BLOCK_EDGE_SHADE: f32 = 0.7;
+
+// Color de la superficie en el punto: el del material con el borde de la cara
+// oscurecido, para que se note donde termina un bloque y empieza el otro.
+// En la fase 10 esto se reemplaza por la textura del bloque
+fn surface_color(intersect: &Intersect) -> Color {
+    let (u, v) = intersect.uv;
+    let on_edge = u < BLOCK_EDGE || u > 1.0 - BLOCK_EDGE || v < BLOCK_EDGE || v > 1.0 - BLOCK_EDGE;
+
+    if on_edge {
+        intersect.material.diffuse * BLOCK_EDGE_SHADE
+    } else {
+        intersect.material.diffuse
+    }
+}
+
 fn sky_color(direction: &Vec3) -> Color {
     let t = 0.5 * (direction.y + 1.0);
     SKY_HORIZON.lerp(&SKY_ZENITH, t)
 }
 
+// Un punto esta en sombra si algo se atraviesa entre el y la luz
+fn in_shadow(
+    intersect: &Intersect,
+    light_direction: &Vec3,
+    light_distance: f32,
+    objects: &[Box<dyn RayIntersect>],
+) -> bool {
+    let shadow_origin = intersect.point + intersect.normal * SHADOW_BIAS;
+
+    objects.iter().any(|object| {
+        let hit = object.ray_intersect(&shadow_origin, light_direction);
+        // Lo que esta detras de la luz no le hace sombra al punto
+        hit.is_intersecting && hit.distance < light_distance
+    })
+}
+
 // Difusa (Lambert) + especular (Phong) de una luz en el punto de impacto
-fn shade(intersect: &Intersect, view_direction: &Vec3, light: &Light) -> Color {
+fn shade(
+    intersect: &Intersect,
+    surface: &Color,
+    view_direction: &Vec3,
+    light: &Light,
+    objects: &[Box<dyn RayIntersect>],
+) -> Color {
     let material = &intersect.material;
-    let light_direction = (light.position - intersect.point).normalize();
+    let to_light = light.position - intersect.point;
+    let light_distance = to_light.length();
+    let light_direction = to_light / light_distance;
+
+    // En sombra solo queda la luz ambiente
+    if in_shadow(intersect, &light_direction, light_distance, objects) {
+        return Color::default();
+    }
     let light_color = light.color * light.intensity;
 
     // Lambert: la cara recibe mas luz mientras mas de frente la mire
     let diffuse_intensity = intersect.normal.dot(&light_direction).max(0.0);
-    let diffuse = material.diffuse * light_color * (diffuse_intensity * material.albedo[0]);
+    let diffuse = *surface * light_color * (diffuse_intensity * material.albedo[0]);
 
     // Phong: que tan alineado esta el reflejo de la luz con el ojo
     let reflect_direction = (-light_direction).reflect(&intersect.normal);
@@ -61,9 +112,11 @@ pub fn cast_ray(
     // Del punto de impacto hacia la camara
     let view_direction = -*ray_direction;
 
-    let mut color = intersect.material.diffuse * AMBIENT;
+    let surface = surface_color(&intersect);
+
+    let mut color = surface * AMBIENT;
     for light in lights {
-        color = color + shade(&intersect, &view_direction, light);
+        color = color + shade(&intersect, &surface, &view_direction, light, objects);
     }
     color
 }
