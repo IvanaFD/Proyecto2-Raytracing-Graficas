@@ -57,9 +57,10 @@ impl Palette {
             log: add(Color::from_rgb(102, 81, 49), 12.0, [0.85, 0.15, 0.0, 0.0], &t.log),
             planks: add(Color::from_rgb(162, 130, 78), 20.0, [0.8, 0.2, 0.0, 0.0], &t.planks),
             cherry_leaves: add(Color::from_rgb(242, 164, 204), 8.0, [0.9, 0.1, 0.0, 0.0], &t.cherry_leaves),
-            // Agua: por ahora opaca; en las fases 14 y 15 se vuelve reflejante y transparente
-            water: add(Color::from_rgb(52, 98, 205), 60.0, [0.6, 0.5, 0.0, 0.0], &t.water),
-            obsidian: add(Color::from_rgb(22, 15, 34), 80.0, [0.6, 0.6, 0.0, 0.0], &t.obsidian),
+            // Agua: refleja el cielo y lo que la rodea; en la fase 15 se vuelve transparente
+            water: add(Color::from_rgb(52, 98, 205), 80.0, [0.45, 0.6, 0.55, 0.0], &t.water),
+            // Obsidiana pulida: un reflejo leve que la hace ver como vidrio volcanico
+            obsidian: add(Color::from_rgb(22, 15, 34), 80.0, [0.6, 0.6, 0.15, 0.0], &t.obsidian),
             // Portal y lampara: en la fase 17 se vuelven emisivos
             portal: add(Color::from_rgb(128, 42, 214), 40.0, [0.8, 0.3, 0.0, 0.0], &t.portal),
             lamp: add(Color::from_rgb(255, 214, 120), 20.0, [0.9, 0.2, 0.0, 0.0], &t.lamp),
@@ -94,11 +95,20 @@ impl HeightMap {
     }
 
     // Cambia la altura de una columna; si no existia (fuera de la isla) la crea
+    // tan profunda como sus vecinas, para que no quede un hueco en la orilla
     fn set_surface(&mut self, x: i32, z: i32, surface: i32, top: Option<BlockId>) {
         let Some(index) = Self::index(x, z) else {
             return;
         };
-        let bottom = self.columns[index].map_or(surface - 3, |column| column.bottom.min(surface - 1));
+        let bottom = match self.columns[index] {
+            Some(column) => column.bottom.min(surface - 1),
+            None => [(x - 1, z), (x + 1, z), (x, z - 1), (x, z + 1)]
+                .iter()
+                .filter_map(|&(nx, nz)| self.get(nx, nz).map(|column| column.bottom))
+                .min()
+                .unwrap_or(surface - 3)
+                .min(surface - 1),
+        };
         self.columns[index] = Some(Column {
             surface,
             bottom,
@@ -157,20 +167,26 @@ fn around_center(angle: f32, distance: f32) -> (i32, i32) {
     )
 }
 
-// Estanque de 5x3: se hunde un bloque y se llena de agua hasta el nivel del borde
+// Estanque de 6x4: se hunde un bloque y se llena de agua hasta el nivel del borde
 fn carve_pond(map: &mut HeightMap, blocks: &Palette, angle: f32) -> Vec<(i32, i32, i32)> {
-    let (px, pz) = around_center(angle, 9.0);
-    let in_pond = |x: i32, z: i32| (px - 2..=px + 2).contains(&x) && (pz - 1..=pz + 1).contains(&z);
+    let (px, pz) = around_center(angle, 8.0);
+    let in_pond = |x: i32, z: i32| (px - 3..=px + 2).contains(&x) && (pz - 2..=pz + 1).contains(&z);
 
-    let level = (px - 2..=px + 2)
-        .flat_map(|x| (pz - 1..=pz + 1).map(move |z| (x, z)))
+    // El nivel del agua es la altura promedio de la zona: en una ladera se hunde un
+    // poco la parte alta y se levanta el borde de la parte baja
+    let heights: Vec<i32> = (px - 3..=px + 2)
+        .flat_map(|x| (pz - 2..=pz + 1).map(move |z| (x, z)))
         .filter_map(|(x, z)| map.get(x, z).map(|column| column.surface))
-        .min()
-        .unwrap_or(1);
+        .collect();
+    let level = if heights.is_empty() {
+        1
+    } else {
+        (heights.iter().sum::<i32>() as f32 / heights.len() as f32).round() as i32
+    };
 
     let mut water = Vec::new();
-    for x in px - 3..=px + 3 {
-        for z in pz - 2..=pz + 2 {
+    for x in px - 4..=px + 3 {
+        for z in pz - 3..=pz + 2 {
             if in_pond(x, z) {
                 // Fondo de arena y agua encima
                 map.set_surface(x, z, level - 1, Some(blocks.sand));

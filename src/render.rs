@@ -13,6 +13,10 @@ use crate::vec3::Vec3;
 // choque con la misma cara de la que sale ("shadow acne")
 const SHADOW_BIAS: f32 = 1e-3;
 
+// Cuantas veces puede rebotar un rayo. Sin limite, dos superficies que se
+// reflejan una a la otra harian una recursion infinita
+const MAX_DEPTH: u32 = 3;
+
 // Filas de bloques de pixeles que toma un hilo cada vez. Bandas pequenas
 // reparten mejor el trabajo: una banda con mucho cielo termina rapido y el
 // hilo toma otra en lugar de quedarse esperando
@@ -87,7 +91,8 @@ fn shade(
     diffuse + specular
 }
 
-pub fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, scene: &Scene) -> Color {
+// `depth` cuenta los rebotes: 0 para el rayo que sale de la camara
+pub fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, scene: &Scene, depth: u32) -> Color {
     let objects = &scene.objects;
     let mut intersect = Intersect::empty();
     // Distancia del impacto mas cercano encontrado hasta ahora
@@ -114,6 +119,18 @@ pub fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, scene: &Scene) -> Color
     for light in &scene.lights {
         color = color + shade(&intersect, &surface, &view_direction, light, objects);
     }
+
+    // Reflexion: se lanza otro rayo en la direccion del reflejo, R = D - 2(D.N)N,
+    // y su color se mezcla con el de la superficie segun la reflectividad
+    let reflectivity = intersect.material.albedo[2];
+    if reflectivity > 0.0 && depth < MAX_DEPTH {
+        let reflect_direction = ray_direction.reflect(&intersect.normal).normalize();
+        // Se despega de la superficie para que el rayo no choque con ella misma
+        let reflect_origin = intersect.point + intersect.normal * SHADOW_BIAS;
+        let reflected = cast_ray(&reflect_origin, &reflect_direction, scene, depth + 1);
+        color = color * (1.0 - reflectivity) + reflected * reflectivity;
+    }
+
     color
 }
 
@@ -148,7 +165,7 @@ pub fn render(
 
         // Direccion en espacio de camara, pasada a espacio mundo
         let ray_direction = frame.ray_direction(&Vec3::new(screen_x, screen_y, -1.0));
-        cast_ray(&frame.eye, &ray_direction, scene).to_bytes()
+        cast_ray(&frame.eye, &ray_direction, scene, 0).to_bytes()
     };
 
     // Cada banda es un pedazo contiguo del framebuffer con varias filas completas.
