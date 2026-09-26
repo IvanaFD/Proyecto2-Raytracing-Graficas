@@ -88,7 +88,14 @@ const BARK_BROWN: Color = Color::from_rgb(102, 81, 49);
 const WOOD_LIGHT: Color = Color::from_rgb(176, 144, 90);
 const WOOD_DARK: Color = Color::from_rgb(146, 115, 68);
 const PLANK_BROWN: Color = Color::from_rgb(162, 130, 78);
-const LEAF_GREEN: Color = Color::from_rgb(58, 122, 36);
+const CHERRY_PINK: Color = Color::from_rgb(242, 164, 204);
+const WATER_BLUE: Color = Color::from_rgb(52, 98, 205);
+const OBSIDIAN_BLACK: Color = Color::from_rgb(22, 15, 34);
+const OBSIDIAN_PURPLE: Color = Color::from_rgb(66, 40, 100);
+const PORTAL_PURPLE: Color = Color::from_rgb(128, 42, 214);
+const LAMP_YELLOW: Color = Color::from_rgb(255, 214, 120);
+const LAMP_FRAME: Color = Color::from_rgb(92, 58, 30);
+const BRICK_GRAY: Color = Color::from_rgb(122, 122, 122);
 
 fn grass_top(x: usize, y: usize) -> Color {
     GRASS_GREEN * (0.8 + 0.3 * hash(x, y, 1))
@@ -167,10 +174,65 @@ fn planks(x: usize, y: usize) -> Color {
     }
 }
 
-// Hojas: verde con huecos oscuros entre las hojas
-fn leaves(x: usize, y: usize) -> Color {
-    let base = LEAF_GREEN * (0.7 + 0.4 * hash(x, y, 14));
-    if hash(x, y, 15) < 0.2 { base * 0.45 } else { base }
+// Hojas de cerezo (sakura): rosado con petalos claros y huecos mas oscuros
+fn cherry_leaves(x: usize, y: usize) -> Color {
+    let base = CHERRY_PINK * (0.8 + 0.3 * hash(x, y, 16));
+    let petal = hash(x, y, 17);
+    if petal < 0.18 {
+        base * 0.62
+    } else if petal > 0.9 {
+        Color::new(1.0, 0.9, 0.95)
+    } else {
+        base
+    }
+}
+
+// Agua: azul con lineas horizontales claras, como pequenas olas
+fn water(x: usize, y: usize) -> Color {
+    let wave = (y + x / 4) % 5 == 0 && hash(x / 2, y, 18) > 0.4;
+    let base = WATER_BLUE * (0.9 + 0.15 * hash(x, y, 19));
+    if wave { base * 1.35 } else { base }
+}
+
+// Obsidiana: casi negra con vetas moradas
+fn obsidian(x: usize, y: usize) -> Color {
+    let vein = hash(x / 2, y / 2, 20);
+    if vein > 0.8 {
+        OBSIDIAN_PURPLE * (0.8 + 0.3 * hash(x, y, 21))
+    } else {
+        OBSIDIAN_BLACK * (0.8 + 0.4 * hash(x, y, 22))
+    }
+}
+
+// Portal: remolino morado (bandas diagonales que se tuercen con ruido)
+fn portal(x: usize, y: usize) -> Color {
+    let swirl = ((x as f32 * 0.9 + y as f32 * 0.6 + 3.0 * hash(x / 3, y / 3, 23)).sin() + 1.0) / 2.0;
+    PORTAL_PURPLE * (0.6 + 0.6 * swirl)
+}
+
+// Lampara: marco de madera y un centro amarillo que brilla
+fn lamp(x: usize, y: usize) -> Color {
+    let frame = x < 2 || y < 2 || x > TEXTURE_SIZE - 3 || y > TEXTURE_SIZE - 3;
+    let cross = x == 7 || x == 8 || y == 7 || y == 8;
+    if frame {
+        LAMP_FRAME * (0.85 + 0.2 * hash(x, y, 24))
+    } else if cross {
+        LAMP_FRAME * 1.3
+    } else {
+        LAMP_YELLOW * (0.85 + 0.2 * hash(x, y, 25))
+    }
+}
+
+// Ladrillos de piedra: filas de 4 px de alto con las juntas alternadas
+fn stone_bricks(x: usize, y: usize) -> Color {
+    let row = y / 4;
+    let mortar_row = y % 4 == 3;
+    let mortar_column = (x + if row % 2 == 0 { 0 } else { 4 }) % 8 == 7;
+    if mortar_row || mortar_column {
+        BRICK_GRAY * 0.6
+    } else {
+        BRICK_GRAY * (0.85 + 0.2 * hash(x, y, 26))
+    }
 }
 
 // Todas las texturas del juego. Se generan una sola vez y quedan vivas todo el
@@ -182,7 +244,12 @@ pub struct TextureSet {
     pub sand: BlockTextures,
     pub log: BlockTextures,
     pub planks: BlockTextures,
-    pub leaves: BlockTextures,
+    pub cherry_leaves: BlockTextures,
+    pub water: BlockTextures,
+    pub obsidian: BlockTextures,
+    pub portal: BlockTextures,
+    pub lamp: BlockTextures,
+    pub stone_bricks: BlockTextures,
 }
 
 impl TextureSet {
@@ -202,7 +269,12 @@ impl TextureSet {
                 bottom: Texture::from_fn(log_top),
             },
             planks: same_on_all_faces(planks),
-            leaves: same_on_all_faces(leaves),
+            cherry_leaves: same_on_all_faces(cherry_leaves),
+            water: same_on_all_faces(water),
+            obsidian: same_on_all_faces(obsidian),
+            portal: same_on_all_faces(portal),
+            lamp: same_on_all_faces(lamp),
+            stone_bricks: same_on_all_faces(stone_bricks),
         }
     }
 }

@@ -3,9 +3,11 @@ mod color;
 mod cube;
 mod framebuffer;
 mod light;
+mod noise;
 mod material;
 mod ray_intersect;
 mod render;
+mod terrain;
 mod texture;
 mod vec3;
 mod world;
@@ -20,12 +22,9 @@ use camera::Camera;
 use color::Color;
 use framebuffer::Framebuffer;
 use light::Light;
-use material::Material;
 use ray_intersect::RayIntersect;
 use render::{RenderSettings, render};
-use texture::textures;
 use vec3::Vec3;
-use world::World;
 
 const WINDOW_WIDTH: i32 = 800;
 const WINDOW_HEIGHT: i32 = 600;
@@ -38,6 +37,15 @@ const ZOOM_SPEED: f32 = 8.0;
 // Mientras la camara se mueve se lanza un rayo por cada bloque de 2x2 pixeles
 // (4 veces menos rayos); al soltar las teclas se traza a resolucion completa
 const MOVING_SCALE: usize = 2;
+
+// Semilla de la isla al abrir el programa
+const INITIAL_SEED: u64 = 2026;
+
+// Todo el mundo es un solo objeto: el DDA ya sabe donde esta cada bloque
+fn build_scene(seed: u64) -> Vec<Box<dyn RayIntersect>> {
+    println!("Isla generada con la semilla {seed}");
+    vec![Box::new(terrain::generate(seed))]
+}
 
 // Mueve la camara segun las teclas presionadas. Devuelve si cambio algo
 fn handle_input(window: &RaylibHandle, camera: &mut Camera) -> bool {
@@ -92,88 +100,26 @@ fn main() {
         WINDOW_HEIGHT as usize,
     );
 
-    let textures = textures();
+    // La isla se genera a partir de una semilla; con G se genera otra
+    let mut seed = INITIAL_SEED;
+    let mut objects = build_scene(seed);
 
-    // Material::new(color, exponente especular, [difuso, especular, reflectividad, transparencia], IOR)
-    // El color base es el tono promedio del bloque; lo que se ve es la textura
-    let grass = Material::new(Color::from_rgb(106, 170, 64), 10.0, [0.9, 0.1, 0.0, 0.0], 1.0)
-        .textured(&textures.grass);
-    let dirt = Material::new(Color::from_rgb(134, 96, 67), 5.0, [0.95, 0.05, 0.0, 0.0], 1.0)
-        .textured(&textures.dirt);
-    let stone = Material::new(Color::from_rgb(128, 128, 128), 30.0, [0.8, 0.25, 0.0, 0.0], 1.0)
-        .textured(&textures.stone);
-    let sand = Material::new(Color::from_rgb(219, 207, 163), 10.0, [0.9, 0.1, 0.0, 0.0], 1.0)
-        .textured(&textures.sand);
-    let log = Material::new(Color::from_rgb(102, 81, 49), 12.0, [0.85, 0.15, 0.0, 0.0], 1.0)
-        .textured(&textures.log);
-    let planks = Material::new(Color::from_rgb(162, 130, 78), 20.0, [0.8, 0.2, 0.0, 0.0], 1.0)
-        .textured(&textures.planks);
-    let leaves = Material::new(Color::from_rgb(58, 122, 36), 8.0, [0.9, 0.1, 0.0, 0.0], 1.0)
-        .textured(&textures.leaves);
-
-    // Diorama centrado en el origen para que la camara gire alrededor de el:
-    // un grid de 10x8x10 celdas que va de (-5, 0, -5) a (5, 8, 5)
-    let mut world = World::new([-5, 0, -5], [10, 8, 10]);
-    let grass = world.add_material(grass);
-    let dirt = world.add_material(dirt);
-    let stone = world.add_material(stone);
-    let sand = world.add_material(sand);
-    let log = world.add_material(log);
-    let planks = world.add_material(planks);
-    let leaves = world.add_material(leaves);
-
-    // Piso de bloques de pasto de 10x10
-    for x in -5..5 {
-        for z in -5..5 {
-            world.set(x, 0, z, grass);
-        }
-    }
-
-    // Una fila con cada material para compararlos
-    world.set(-1, 1, 2, dirt);
-    world.set(0, 1, 2, stone);
-    world.set(1, 1, 2, sand);
-    world.set(2, 1, 2, planks);
-    world.set(2, 2, 2, planks);
-    world.set(3, 1, 2, log);
-
-    // Arbol: copa de hojas y tronco de 4 bloques (el tronco va despues para
-    // reemplazar las hojas que caen en su columna)
-    let (tree_x, tree_z) = (-2, -2);
-    for y in 3..6 {
-        // La copa se angosta arriba
-        let reach: i32 = if y == 5 { 1 } else { 2 };
-        for dx in -reach..=reach {
-            for dz in -reach..=reach {
-                // Sin las esquinas para que la copa se vea redondeada
-                if dx.abs() != reach || dz.abs() != reach {
-                    world.set(tree_x + dx, y, tree_z + dz, leaves);
-                }
-            }
-        }
-    }
-    for y in 1..5 {
-        world.set(tree_x, y, tree_z, log);
-    }
-
-    // Todo el mundo es un solo objeto: el DDA ya sabe donde esta cada bloque
-    let objects: Vec<Box<dyn RayIntersect>> = vec![Box::new(world)];
-
-    // Arriba y a un lado del diorama, para que las sombras se vean largas
+    // El sol: lejos, arriba y a un lado de la isla, para que las sombras se vean largas
     let lights = [Light::new(
-        Vec3::new(-8.0, 9.0, 5.0),
+        Vec3::new(-40.0, 60.0, 30.0),
         Color::new(1.0, 1.0, 1.0),
         1.0,
     )];
 
     let mut camera = Camera {
-        center: Vec3::new(0.0, 1.0, 0.0),
+        // A media altura entre la parte de abajo de la isla y la copa del arbol
+        center: Vec3::new(0.0, 4.0, 0.0),
         yaw: 0.6,
-        pitch: 0.55,
-        radius: 14.0,
-        // Suficiente para no meterse dentro del diorama
-        min_radius: 6.0,
-        max_radius: 30.0,
+        pitch: 0.35,
+        radius: 48.0,
+        // Suficiente para no meterse dentro de la isla ni de la copa
+        min_radius: 22.0,
+        max_radius: 90.0,
         fov: 60.0_f32.to_radians(),
     };
 
@@ -183,6 +129,13 @@ fn main() {
     let mut needs_full_render = true;
 
     while !window.window_should_close() {
+        // G genera otra isla con la siguiente semilla
+        if window.is_key_pressed(KeyboardKey::KEY_G) {
+            seed += 1;
+            objects = build_scene(seed);
+            needs_full_render = true;
+        }
+
         // T alterna entre 1 hilo y todos, para comparar tiempos
         if window.is_key_pressed(KeyboardKey::KEY_T) {
             use_all_threads = !use_all_threads;
