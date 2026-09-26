@@ -6,6 +6,10 @@ use crate::vec3::Vec3;
 // Las texturas de Minecraft son de 16x16 pixeles
 pub const TEXTURE_SIZE: usize = 16;
 
+// Fuerza del relieve de los mapas normales (mas alto = pendientes mas marcadas)
+const STONE_RELIEF: f32 = 6.0;
+const BRICK_RELIEF: f32 = 5.0;
+
 // Oscurece el anillo de pixeles del borde para que se note donde termina
 // un bloque y empieza el siguiente
 const BORDER_SHADE: f32 = 0.82;
@@ -49,12 +53,53 @@ impl Texture {
     }
 }
 
+// Mapa normal de 16x16: en cada pixel, hacia donde "mira" la superficie en espacio
+// tangente. x va hacia donde crece u, y hacia donde crece v, y z sale de la cara.
+// Un pixel plano es (0, 0, 1)
+#[derive(Debug, PartialEq)]
+pub struct NormalMap {
+    normals: [Vec3; TEXTURE_SIZE * TEXTURE_SIZE],
+}
+
+impl NormalMap {
+    // Se toma el brillo de la textura como altura: lo oscuro (grietas, juntas,
+    // el borde del bloque) queda hundido. La normal sale de la pendiente de esa
+    // altura, medida con diferencias finitas entre los pixeles vecinos
+    fn from_texture(texture: &Texture, strength: f32) -> Self {
+        let height = |x: usize, y: usize| {
+            let color = texture.pixels[y * TEXTURE_SIZE + x];
+            0.3 * color.r + 0.59 * color.g + 0.11 * color.b
+        };
+        let last = TEXTURE_SIZE - 1;
+
+        let mut normals = [Vec3::new(0.0, 0.0, 1.0); TEXTURE_SIZE * TEXTURE_SIZE];
+        for y in 0..TEXTURE_SIZE {
+            for x in 0..TEXTURE_SIZE {
+                // En la orilla de la textura se usa el mismo pixel (no se da la vuelta)
+                let slope_u = height((x + 1).min(last), y) - height(x.saturating_sub(1), y);
+                let slope_v = height(x, (y + 1).min(last)) - height(x, y.saturating_sub(1));
+                normals[y * TEXTURE_SIZE + x] =
+                    Vec3::new(-slope_u * strength, -slope_v * strength, 1.0).normalize();
+            }
+        }
+        NormalMap { normals }
+    }
+
+    pub fn sample(&self, u: f32, v: f32) -> Vec3 {
+        let x = ((u * TEXTURE_SIZE as f32) as usize).min(TEXTURE_SIZE - 1);
+        let y = ((v * TEXTURE_SIZE as f32) as usize).min(TEXTURE_SIZE - 1);
+        self.normals[y * TEXTURE_SIZE + x]
+    }
+}
+
 // Un bloque puede tener textura distinta arriba, a los lados y abajo (como el pasto)
 #[derive(Debug, PartialEq)]
 pub struct BlockTextures {
     pub top: Texture,
     pub side: Texture,
     pub bottom: Texture,
+    // Relieve de la superficie; el mismo en todas las caras
+    pub normal_map: Option<NormalMap>,
 }
 
 impl BlockTextures {
@@ -68,6 +113,12 @@ impl BlockTextures {
         };
         texture.sample(uv.0, uv.1)
     }
+
+    // Le da relieve al bloque a partir de su textura de los lados
+    fn with_normal_map(self, strength: f32) -> Self {
+        let normal_map = Some(NormalMap::from_texture(&self.side, strength));
+        BlockTextures { normal_map, ..self }
+    }
 }
 
 fn same_on_all_faces(pixel: impl Fn(usize, usize) -> Color) -> BlockTextures {
@@ -75,6 +126,7 @@ fn same_on_all_faces(pixel: impl Fn(usize, usize) -> Color) -> BlockTextures {
         top: Texture::from_fn(&pixel),
         side: Texture::from_fn(&pixel),
         bottom: Texture::from_fn(&pixel),
+        normal_map: None,
     }
 }
 
@@ -259,14 +311,17 @@ impl TextureSet {
                 top: Texture::from_fn(grass_top),
                 side: Texture::from_fn(grass_side),
                 bottom: Texture::from_fn(dirt),
+                normal_map: None,
             },
             dirt: same_on_all_faces(dirt),
-            stone: same_on_all_faces(stone),
+            // La piedra y los ladrillos tienen relieve: grietas y juntas hundidas
+            stone: same_on_all_faces(stone).with_normal_map(STONE_RELIEF),
             sand: same_on_all_faces(sand),
             log: BlockTextures {
                 top: Texture::from_fn(log_top),
                 side: Texture::from_fn(log_side),
                 bottom: Texture::from_fn(log_top),
+                normal_map: None,
             },
             planks: same_on_all_faces(planks),
             cherry_leaves: same_on_all_faces(cherry_leaves),
@@ -274,7 +329,7 @@ impl TextureSet {
             obsidian: same_on_all_faces(obsidian),
             portal: same_on_all_faces(portal),
             lamp: same_on_all_faces(lamp),
-            stone_bricks: same_on_all_faces(stone_bricks),
+            stone_bricks: same_on_all_faces(stone_bricks).with_normal_map(BRICK_RELIEF),
         }
     }
 }
@@ -305,6 +360,24 @@ mod tests {
         assert_eq!(color, Color::new(5.0, 9.0, 0.0));
         // u = v = 1 no se sale del arreglo
         texture.sample(1.0, 1.0);
+    }
+
+    #[test]
+    fn textura_plana_da_normales_planas() {
+        let flat = Texture::from_fn(|_, _| Color::new(0.5, 0.5, 0.5));
+        let normal_map = NormalMap::from_texture(&flat, 4.0);
+        // Lejos del borde oscurecido todo es plano
+        assert_eq!(normal_map.sample(0.5, 0.5), Vec3::new(0.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn la_normal_se_inclina_lejos_de_lo_alto() {
+        // Mas claro (mas alto) hacia la derecha: la superficie mira hacia la izquierda (-u)
+        let ramp = Texture::from_fn(|x, _| Color::new(x as f32 / 16.0, x as f32 / 16.0, x as f32 / 16.0));
+        let normal = NormalMap::from_texture(&ramp, 4.0).sample(0.5, 0.5);
+        assert!(normal.x < 0.0);
+        assert!(normal.y.abs() < 1e-6);
+        assert!((normal.length() - 1.0).abs() < 1e-5);
     }
 
     #[test]

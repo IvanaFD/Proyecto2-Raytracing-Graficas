@@ -122,6 +122,7 @@ fn main() {
         skybox: Skybox::sunset(sun_direction),
         // Lo que no ve el sol queda en penumbra morada, como el cielo
         ambient: Color::new(0.3, 0.22, 0.34),
+        normal_maps: true,
     };
 
     let mut camera = Camera {
@@ -146,6 +147,14 @@ fn main() {
         if window.is_key_pressed(KeyboardKey::KEY_G) {
             seed += 1;
             scene.objects = build_objects(seed);
+            needs_full_render = true;
+        }
+
+        // N prende y apaga los mapas normales, para comparar el relieve
+        if window.is_key_pressed(KeyboardKey::KEY_N) {
+            scene.normal_maps = !scene.normal_maps;
+            let state = if scene.normal_maps { "prendidos" } else { "apagados" };
+            println!("Mapas normales {state}");
             needs_full_render = true;
         }
 

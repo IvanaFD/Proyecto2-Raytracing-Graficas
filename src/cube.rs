@@ -93,6 +93,27 @@ pub fn face_uv(local: Vec3, normal: Vec3) -> (f32, f32) {
     }
 }
 
+// Tangente (T, hacia donde crece u) y bitangente (B, hacia donde crece v) de cada
+// cara. Junto con la normal N forman la base TBN que pasa un vector del espacio
+// de la textura al mundo. En un cubo se conocen de antemano segun la cara, asi que
+// no hace falta calcularlas con derivadas. Tienen que coincidir con `face_uv`
+pub fn face_tangents(normal: &Vec3) -> (Vec3, Vec3) {
+    let down = Vec3::new(0.0, -1.0, 0.0);
+    if normal.x > 0.0 {
+        (Vec3::new(0.0, 0.0, -1.0), down)
+    } else if normal.x < 0.0 {
+        (Vec3::new(0.0, 0.0, 1.0), down)
+    } else if normal.z > 0.0 {
+        (Vec3::new(1.0, 0.0, 0.0), down)
+    } else if normal.z < 0.0 {
+        (Vec3::new(-1.0, 0.0, 0.0), down)
+    } else if normal.y > 0.0 {
+        (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0))
+    } else {
+        (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,6 +156,32 @@ mod tests {
         let hit = ray_box(&Vec3::new(0.0, 0.0, -5.0), &Vec3::new(1.0, 0.0, 0.0), &MIN, &MAX).unwrap();
         assert!(hit.t_enter < 0.0);
         assert!((hit.t_exit - 0.5).abs() < TOLERANCE);
+    }
+
+    #[test]
+    fn las_tangentes_coinciden_con_las_uv_de_cada_cara() {
+        let normals = [
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, -1.0),
+        ];
+        let center = Vec3::new(0.5, 0.5, 0.5);
+        for normal in normals {
+            let (tangent, bitangent) = face_tangents(&normal);
+            let (u0, v0) = face_uv(center, normal);
+            // Moverse por T solo cambia u (crece); moverse por B solo cambia v (crece)
+            let (u1, v1) = face_uv(center + tangent * 0.1, normal);
+            let (u2, v2) = face_uv(center + bitangent * 0.1, normal);
+            assert!(u1 > u0 && (v1 - v0).abs() < TOLERANCE, "T de {normal:?}");
+            assert!(v2 > v0 && (u2 - u0).abs() < TOLERANCE, "B de {normal:?}");
+            // Los tres son perpendiculares
+            assert_eq!(tangent.dot(&normal), 0.0);
+            assert_eq!(bitangent.dot(&normal), 0.0);
+            assert_eq!(tangent.dot(&bitangent), 0.0);
+        }
     }
 
     #[test]

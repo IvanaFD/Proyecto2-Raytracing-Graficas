@@ -3,6 +3,7 @@ use std::thread;
 
 use crate::camera::Camera;
 use crate::color::Color;
+use crate::cube::face_tangents;
 use crate::framebuffer::CHANNELS;
 use crate::light::Light;
 use crate::ray_intersect::{Intersect, RayIntersect};
@@ -81,6 +82,28 @@ pub struct Scene {
     // Luz minima que llega a todos lados, para que lo que no ve ninguna luz no
     // quede negro. Tiene color: al atardecer la sombra se ve morada
     pub ambient: Color,
+    // Si se usan los mapas normales (se apagan con N para comparar)
+    pub normal_maps: bool,
+}
+
+// Mapa normal: cambia la normal pixel a pixel sin cambiar la geometria. La normal
+// del mapa esta en espacio tangente y se pasa al mundo con la base TBN de la cara:
+// N' = T * n.x + B * n.y + N * n.z
+fn apply_normal_map(intersect: &mut Intersect) {
+    let normal_map = intersect
+        .material
+        .textures
+        .and_then(|textures| textures.normal_map.as_ref());
+    let Some(normal_map) = normal_map else {
+        return;
+    };
+
+    let tangent_normal = normal_map.sample(intersect.uv.0, intersect.uv.1);
+    let (tangent, bitangent) = face_tangents(&intersect.normal);
+    intersect.normal = (tangent * tangent_normal.x
+        + bitangent * tangent_normal.y
+        + intersect.normal * tangent_normal.z)
+        .normalize();
 }
 
 // Cuanta luz llega del foco al punto (1 = toda, 0 = sombra completa). Un bloque
@@ -176,12 +199,21 @@ pub fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, scene: &Scene, depth: u
         return scene.skybox.sample(ray_direction);
     }
 
+    // La normal de la cara antes del mapa normal
+    let face_normal = intersect.normal;
+    if scene.normal_maps {
+        apply_normal_map(&mut intersect);
+    }
+
     // Del punto de impacto hacia la camara
     let view_direction = -*ray_direction;
 
     let surface = surface_color(&intersect);
 
-    let mut color = surface * scene.ambient;
+    // Las grietas y juntas del mapa normal miran de lado y reciben menos luz ambiente,
+    // como una cavidad real. En una cara plana el factor es 1
+    let cavity = intersect.normal.dot(&face_normal).max(0.0).powi(2);
+    let mut color = surface * scene.ambient * cavity;
     for light in &scene.lights {
         color = color + shade(&intersect, &surface, &view_direction, light, objects);
     }
