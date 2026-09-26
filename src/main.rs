@@ -7,6 +7,7 @@ mod noise;
 mod material;
 mod ray_intersect;
 mod render;
+mod skybox;
 mod terrain;
 mod texture;
 mod vec3;
@@ -23,7 +24,8 @@ use color::Color;
 use framebuffer::Framebuffer;
 use light::Light;
 use ray_intersect::RayIntersect;
-use render::{RenderSettings, render};
+use render::{RenderSettings, Scene, render};
+use skybox::Skybox;
 use vec3::Vec3;
 
 const WINDOW_WIDTH: i32 = 800;
@@ -41,8 +43,13 @@ const MOVING_SCALE: usize = 2;
 // Semilla de la isla al abrir el programa
 const INITIAL_SEED: u64 = 2026;
 
+// Direccion hacia el sol: bajo en el horizonte, como al atardecer. La usan el
+// skybox (donde se dibuja el sol) y la luz (de donde vienen las sombras)
+const SUN_DIRECTION: Vec3 = Vec3::new(-0.83, 0.3, 0.56);
+const SUN_DISTANCE: f32 = 300.0;
+
 // Todo el mundo es un solo objeto: el DDA ya sabe donde esta cada bloque
-fn build_scene(seed: u64) -> Vec<Box<dyn RayIntersect>> {
+fn build_objects(seed: u64) -> Vec<Box<dyn RayIntersect>> {
     println!("Isla generada con la semilla {seed}");
     vec![Box::new(terrain::generate(seed))]
 }
@@ -102,14 +109,20 @@ fn main() {
 
     // La isla se genera a partir de una semilla; con G se genera otra
     let mut seed = INITIAL_SEED;
-    let mut objects = build_scene(seed);
+    let sun_direction = SUN_DIRECTION.normalize();
 
-    // El sol: lejos, arriba y a un lado de la isla, para que las sombras se vean largas
-    let lights = [Light::new(
-        Vec3::new(-40.0, 60.0, 30.0),
-        Color::new(1.0, 1.0, 1.0),
-        1.0,
-    )];
+    let mut scene = Scene {
+        objects: build_objects(seed),
+        // El sol del atardecer: lejos, bajo y naranja, con sombras largas
+        lights: vec![Light::new(
+            sun_direction * SUN_DISTANCE,
+            Color::new(1.0, 0.66, 0.42),
+            1.25,
+        )],
+        skybox: Skybox::sunset(sun_direction),
+        // Lo que no ve el sol queda en penumbra morada, como el cielo
+        ambient: Color::new(0.3, 0.22, 0.34),
+    };
 
     let mut camera = Camera {
         // A media altura entre la parte de abajo de la isla y la copa del arbol
@@ -132,7 +145,7 @@ fn main() {
         // G genera otra isla con la siguiente semilla
         if window.is_key_pressed(KeyboardKey::KEY_G) {
             seed += 1;
-            objects = build_scene(seed);
+            scene.objects = build_objects(seed);
             needs_full_render = true;
         }
 
@@ -167,8 +180,7 @@ fn main() {
                 framebuffer.pixels_mut(),
                 width,
                 height,
-                &objects,
-                &lights,
+                &scene,
                 &camera,
                 &settings,
             );

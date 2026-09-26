@@ -35,6 +35,11 @@ fn lattice(x: i32, z: i32, seed: u32) -> f32 {
     (h & 0x00FF_FFFF) as f32 / 16_777_216.0
 }
 
+// Valor fijo en [0, 1) para cada punto entero (x, y, z) del espacio
+pub fn hash3(x: i32, y: i32, z: i32, seed: u32) -> f32 {
+    lattice(x ^ (z.wrapping_mul(1_619)), y ^ (z.wrapping_mul(31_337)), seed)
+}
+
 // Curva suave 3t^2 - 2t^3: evita que se noten los bordes de la cuadricula
 fn smooth(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)

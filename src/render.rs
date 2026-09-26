@@ -6,13 +6,8 @@ use crate::color::Color;
 use crate::framebuffer::CHANNELS;
 use crate::light::Light;
 use crate::ray_intersect::{Intersect, RayIntersect};
+use crate::skybox::Skybox;
 use crate::vec3::Vec3;
-
-const SKY_HORIZON: Color = Color::from_rgb(200, 225, 255);
-const SKY_ZENITH: Color = Color::from_rgb(60, 120, 215);
-
-// Luz minima que llega a todos lados, para que lo que no ve la luz no quede negro
-const AMBIENT: f32 = 0.3;
 
 // Cuanto se despega el origen del shadow ray de la superficie, para que no
 // choque con la misma cara de la que sale ("shadow acne")
@@ -32,9 +27,14 @@ fn surface_color(intersect: &Intersect) -> Color {
     }
 }
 
-fn sky_color(direction: &Vec3) -> Color {
-    let t = 0.5 * (direction.y + 1.0);
-    SKY_HORIZON.lerp(&SKY_ZENITH, t)
+// Todo lo que se necesita para trazar un rayo
+pub struct Scene {
+    pub objects: Vec<Box<dyn RayIntersect>>,
+    pub lights: Vec<Light>,
+    pub skybox: Skybox,
+    // Luz minima que llega a todos lados, para que lo que no ve ninguna luz no
+    // quede negro. Tiene color: al atardecer la sombra se ve morada
+    pub ambient: Color,
 }
 
 // Un punto esta en sombra si algo se atraviesa entre el y la luz
@@ -87,12 +87,8 @@ fn shade(
     diffuse + specular
 }
 
-pub fn cast_ray(
-    ray_origin: &Vec3,
-    ray_direction: &Vec3,
-    objects: &[Box<dyn RayIntersect>],
-    lights: &[Light],
-) -> Color {
+pub fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, scene: &Scene) -> Color {
+    let objects = &scene.objects;
     let mut intersect = Intersect::empty();
     // Distancia del impacto mas cercano encontrado hasta ahora
     let mut zbuffer = f32::INFINITY;
@@ -106,7 +102,7 @@ pub fn cast_ray(
     }
 
     if !intersect.is_intersecting {
-        return sky_color(ray_direction);
+        return scene.skybox.sample(ray_direction);
     }
 
     // Del punto de impacto hacia la camara
@@ -114,8 +110,8 @@ pub fn cast_ray(
 
     let surface = surface_color(&intersect);
 
-    let mut color = surface * AMBIENT;
-    for light in lights {
+    let mut color = surface * scene.ambient;
+    for light in &scene.lights {
         color = color + shade(&intersect, &surface, &view_direction, light, objects);
     }
     color
@@ -133,8 +129,7 @@ pub fn render(
     pixels: &mut [u8],
     width: usize,
     height: usize,
-    objects: &[Box<dyn RayIntersect>],
-    lights: &[Light],
+    scene: &Scene,
     camera: &Camera,
     settings: &RenderSettings,
 ) {
@@ -153,7 +148,7 @@ pub fn render(
 
         // Direccion en espacio de camara, pasada a espacio mundo
         let ray_direction = frame.ray_direction(&Vec3::new(screen_x, screen_y, -1.0));
-        cast_ray(&frame.eye, &ray_direction, objects, lights).to_bytes()
+        cast_ray(&frame.eye, &ray_direction, scene).to_bytes()
     };
 
     // Cada banda es un pedazo contiguo del framebuffer con varias filas completas.
