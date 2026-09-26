@@ -6,6 +6,7 @@ mod light;
 mod material;
 mod ray_intersect;
 mod render;
+mod texture;
 mod vec3;
 
 use std::thread;
@@ -22,6 +23,7 @@ use light::Light;
 use material::Material;
 use ray_intersect::RayIntersect;
 use render::{RenderSettings, render};
+use texture::textures;
 use vec3::Vec3;
 
 const WINDOW_WIDTH: i32 = 800;
@@ -89,27 +91,57 @@ fn main() {
         WINDOW_HEIGHT as usize,
     );
 
+    let textures = textures();
+
     // Material::new(color, exponente especular, [difuso, especular, reflectividad, transparencia], IOR)
-    let grass = Material::new(Color::from_rgb(95, 159, 53), 10.0, [0.9, 0.1, 0.0, 0.0], 1.0);
-    let dirt = Material::new(Color::from_rgb(134, 96, 67), 5.0, [0.95, 0.05, 0.0, 0.0], 1.0);
-    let stone = Material::new(Color::from_rgb(125, 125, 125), 30.0, [0.8, 0.25, 0.0, 0.0], 1.0);
-    let sand = Material::new(Color::from_rgb(219, 207, 163), 10.0, [0.9, 0.1, 0.0, 0.0], 1.0);
-    let wood = Material::new(Color::from_rgb(162, 130, 78), 15.0, [0.85, 0.15, 0.0, 0.0], 1.0);
+    // El color base es el tono promedio del bloque; lo que se ve es la textura
+    let grass = Material::new(Color::from_rgb(106, 170, 64), 10.0, [0.9, 0.1, 0.0, 0.0], 1.0)
+        .textured(&textures.grass);
+    let dirt = Material::new(Color::from_rgb(134, 96, 67), 5.0, [0.95, 0.05, 0.0, 0.0], 1.0)
+        .textured(&textures.dirt);
+    let stone = Material::new(Color::from_rgb(128, 128, 128), 30.0, [0.8, 0.25, 0.0, 0.0], 1.0)
+        .textured(&textures.stone);
+    let sand = Material::new(Color::from_rgb(219, 207, 163), 10.0, [0.9, 0.1, 0.0, 0.0], 1.0)
+        .textured(&textures.sand);
+    let log = Material::new(Color::from_rgb(102, 81, 49), 12.0, [0.85, 0.15, 0.0, 0.0], 1.0)
+        .textured(&textures.log);
+    let planks = Material::new(Color::from_rgb(162, 130, 78), 20.0, [0.8, 0.2, 0.0, 0.0], 1.0)
+        .textured(&textures.planks);
+    let leaves = Material::new(Color::from_rgb(58, 122, 36), 8.0, [0.9, 0.1, 0.0, 0.0], 1.0)
+        .textured(&textures.leaves);
 
     // Diorama centrado en el origen para que la camara gire alrededor de el.
     // Todos los bloques estan alineados a la cuadricula (esquinas enteras)
     let mut blocks = vec![
-        Cube::block(Vec3::new(-2.0, 1.0, 0.0), grass),
-        Cube::block(Vec3::new(-1.0, 1.0, 0.0), dirt),
-        Cube::block(Vec3::new(0.0, 1.0, 0.0), stone),
-        Cube::block(Vec3::new(1.0, 1.0, 0.0), sand),
-        Cube::block(Vec3::new(-1.0, 1.0, -1.0), stone),
-        Cube::block(Vec3::new(-1.0, 2.0, -1.0), wood),
-        // Columna de madera para ver sombras largas al girar
-        Cube::block(Vec3::new(2.0, 1.0, 2.0), wood),
-        Cube::block(Vec3::new(2.0, 2.0, 2.0), wood),
-        Cube::block(Vec3::new(2.0, 3.0, 2.0), wood),
+        // Una fila con cada material para compararlos
+        Cube::block(Vec3::new(-1.0, 1.0, 2.0), dirt),
+        Cube::block(Vec3::new(0.0, 1.0, 2.0), stone),
+        Cube::block(Vec3::new(1.0, 1.0, 2.0), sand),
+        Cube::block(Vec3::new(2.0, 1.0, 2.0), planks),
+        Cube::block(Vec3::new(2.0, 2.0, 2.0), planks),
+        Cube::block(Vec3::new(3.0, 1.0, 2.0), log),
     ];
+
+    // Arbol: tronco de 4 bloques y copa de hojas
+    let (tree_x, tree_z) = (-2, -2);
+    for y in 1..5 {
+        blocks.push(Cube::block(Vec3::new(tree_x as f32, y as f32, tree_z as f32), log));
+    }
+    for y in 3..6 {
+        // La copa se angosta arriba
+        let reach: i32 = if y == 5 { 1 } else { 2 };
+        for dx in -reach..=reach {
+            for dz in -reach..=reach {
+                let is_trunk = dx == 0 && dz == 0 && y < 5;
+                // Sin las esquinas para que la copa se vea redondeada
+                let is_corner = dx.abs() == reach && dz.abs() == reach;
+                if !is_trunk && !is_corner {
+                    let position = Vec3::new((tree_x + dx) as f32, y as f32, (tree_z + dz) as f32);
+                    blocks.push(Cube::block(position, leaves));
+                }
+            }
+        }
+    }
 
     // Piso de bloques de pasto de 10x10
     for x in -5..5 {

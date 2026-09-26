@@ -18,26 +18,17 @@ const AMBIENT: f32 = 0.3;
 // choque con la misma cara de la que sale ("shadow acne")
 const SHADOW_BIAS: f32 = 1e-3;
 
-// Ancho del contorno de cada bloque: 1 texel de una textura de 16x16
-const BLOCK_EDGE: f32 = 1.0 / 16.0;
-const BLOCK_EDGE_SHADE: f32 = 0.7;
-
 // Filas de bloques de pixeles que toma un hilo cada vez. Bandas pequenas
 // reparten mejor el trabajo: una banda con mucho cielo termina rapido y el
 // hilo toma otra en lugar de quedarse esperando
 const BAND_BLOCK_ROWS: usize = 4;
 
-// Color de la superficie en el punto: el del material con el borde de la cara
-// oscurecido, para que se note donde termina un bloque y empieza el otro.
-// En la fase 10 esto se reemplaza por la textura del bloque
+// Color de la superficie en el punto: el pixel de la textura de esa cara,
+// o el color base si el material no tiene textura
 fn surface_color(intersect: &Intersect) -> Color {
-    let (u, v) = intersect.uv;
-    let on_edge = u < BLOCK_EDGE || u > 1.0 - BLOCK_EDGE || v < BLOCK_EDGE || v > 1.0 - BLOCK_EDGE;
-
-    if on_edge {
-        intersect.material.diffuse * BLOCK_EDGE_SHADE
-    } else {
-        intersect.material.diffuse
+    match intersect.material.textures {
+        Some(textures) => textures.sample(&intersect.normal, intersect.uv),
+        None => intersect.material.diffuse,
     }
 }
 
