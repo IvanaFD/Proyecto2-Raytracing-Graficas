@@ -1,7 +1,7 @@
 use raylib::prelude::*;
 
 // R, G, B, A
-const CHANNELS: usize = 4;
+pub const CHANNELS: usize = 4;
 
 pub struct Framebuffer {
     pub width: usize,
@@ -36,17 +36,10 @@ impl Framebuffer {
         }
     }
 
-    pub fn set_pixel(&mut self, x: usize, y: usize, rgb: [u8; 3]) {
-        if x >= self.width || y >= self.height {
-            return;
-        }
-
-        let index = (y * self.width + x) * CHANNELS;
-        self.pixels[index] = rgb[0];
-        self.pixels[index + 1] = rgb[1];
-        self.pixels[index + 2] = rgb[2];
-        self.pixels[index + 3] = 255;
+    // Acceso directo a los bytes RGBA para que el render los reparta entre hilos
+    pub fn pixels_mut(&mut self) -> &mut [u8] {
         self.dirty = true;
+        &mut self.pixels
     }
 
     #[allow(dead_code)]
