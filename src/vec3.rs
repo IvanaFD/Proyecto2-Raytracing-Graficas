@@ -42,6 +42,31 @@ impl Vec3 {
     pub fn reflect(&self, normal: &Vec3) -> Vec3 {
         *self - *normal * (2.0 * self.dot(normal))
     }
+
+    // Refracta la direccion (normalizada) al cruzar una superficie, con la ley de
+    // Snell: n1 sin(t1) = n2 sin(t2). `normal` apunta hacia afuera del material y
+    // `refractive_index` es el del material (afuera es aire, 1.0).
+    // Devuelve None si hay reflexion interna total: saliendo del material con un
+    // angulo muy inclinado, la luz no puede salir y se refleja completa
+    pub fn refract(&self, normal: &Vec3, refractive_index: f32) -> Option<Vec3> {
+        let mut cos_incident = self.dot(normal).clamp(-1.0, 1.0);
+        let mut normal = *normal;
+        let eta = if cos_incident < 0.0 {
+            // Entrando: del aire al material
+            cos_incident = -cos_incident;
+            1.0 / refractive_index
+        } else {
+            // Saliendo: del material al aire, la normal se invierte
+            normal = -normal;
+            refractive_index
+        };
+
+        let k = 1.0 - eta * eta * (1.0 - cos_incident * cos_incident);
+        if k < 0.0 {
+            return None;
+        }
+        Some(*self * eta + normal * (eta * cos_incident - k.sqrt()))
+    }
 }
 
 impl Add for Vec3 {
@@ -137,6 +162,35 @@ mod tests {
         let incidente = Vec3::new(1.0, -1.0, 0.0);
         let normal = Vec3::new(0.0, 1.0, 0.0);
         assert_eq!(incidente.reflect(&normal), Vec3::new(1.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn refract_de_frente_no_se_desvia() {
+        let abajo = Vec3::new(0.0, -1.0, 0.0);
+        let normal = Vec3::new(0.0, 1.0, 0.0);
+        let refractado = abajo.refract(&normal, 1.33).unwrap();
+        assert!((refractado - abajo).length() < EPSILON);
+    }
+
+    #[test]
+    fn refract_cumple_la_ley_de_snell() {
+        // Entra al agua a 45 grados: sin(t2) = sin(45) / 1.33
+        let incidente = Vec3::new(1.0, -1.0, 0.0).normalize();
+        let normal = Vec3::new(0.0, 1.0, 0.0);
+        let refractado = incidente.refract(&normal, 1.33).unwrap();
+        let seno_esperado = (45.0_f32).to_radians().sin() / 1.33;
+        assert!((refractado.x - seno_esperado).abs() < 1e-5);
+        assert!((refractado.length() - 1.0).abs() < 1e-5);
+        // Se acerca a la normal al entrar a un material mas denso
+        assert!(refractado.x < incidente.x);
+    }
+
+    #[test]
+    fn refract_reflexion_interna_total() {
+        // Sale del agua casi rasante: no hay rayo refractado
+        let incidente = Vec3::new(0.95, 0.312, 0.0).normalize();
+        let normal = Vec3::new(0.0, 1.0, 0.0);
+        assert!(incidente.refract(&normal, 1.33).is_none());
     }
 
     #[test]

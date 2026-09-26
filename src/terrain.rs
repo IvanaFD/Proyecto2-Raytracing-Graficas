@@ -41,30 +41,30 @@ struct Palette {
 }
 
 impl Palette {
-    // Material::new(color, exponente especular, [difuso, especular, reflectividad, transparencia], IOR)
+    // add(color, exponente especular, [difuso, especular, reflectividad, transparencia], IOR, textura)
     // El color base es el tono promedio del bloque; lo que se ve es la textura
     fn register(world: &mut World) -> Self {
         let t = textures();
-        let mut add = |color: Color, specular: f32, albedo: [f32; 4], textures| {
-            world.add_material(Material::new(color, specular, albedo, 1.0).textured(textures))
+        let mut add = |color: Color, specular: f32, albedo: [f32; 4], ior: f32, textures| {
+            world.add_material(Material::new(color, specular, albedo, ior).textured(textures))
         };
 
         Palette {
-            grass: add(Color::from_rgb(106, 170, 64), 10.0, [0.9, 0.1, 0.0, 0.0], &t.grass),
-            dirt: add(Color::from_rgb(134, 96, 67), 5.0, [0.95, 0.05, 0.0, 0.0], &t.dirt),
-            stone: add(Color::from_rgb(128, 128, 128), 30.0, [0.8, 0.25, 0.0, 0.0], &t.stone),
-            sand: add(Color::from_rgb(219, 207, 163), 10.0, [0.9, 0.1, 0.0, 0.0], &t.sand),
-            log: add(Color::from_rgb(102, 81, 49), 12.0, [0.85, 0.15, 0.0, 0.0], &t.log),
-            planks: add(Color::from_rgb(162, 130, 78), 20.0, [0.8, 0.2, 0.0, 0.0], &t.planks),
-            cherry_leaves: add(Color::from_rgb(242, 164, 204), 8.0, [0.9, 0.1, 0.0, 0.0], &t.cherry_leaves),
-            // Agua: refleja el cielo y lo que la rodea; en la fase 15 se vuelve transparente
-            water: add(Color::from_rgb(52, 98, 205), 80.0, [0.45, 0.6, 0.55, 0.0], &t.water),
+            grass: add(Color::from_rgb(106, 170, 64), 10.0, [0.9, 0.1, 0.0, 0.0], 1.0, &t.grass),
+            dirt: add(Color::from_rgb(134, 96, 67), 5.0, [0.95, 0.05, 0.0, 0.0], 1.0, &t.dirt),
+            stone: add(Color::from_rgb(128, 128, 128), 30.0, [0.8, 0.25, 0.0, 0.0], 1.0, &t.stone),
+            sand: add(Color::from_rgb(219, 207, 163), 10.0, [0.9, 0.1, 0.0, 0.0], 1.0, &t.sand),
+            log: add(Color::from_rgb(102, 81, 49), 12.0, [0.85, 0.15, 0.0, 0.0], 1.0, &t.log),
+            planks: add(Color::from_rgb(162, 130, 78), 20.0, [0.8, 0.2, 0.0, 0.0], 1.0, &t.planks),
+            cherry_leaves: add(Color::from_rgb(242, 164, 204), 8.0, [0.9, 0.1, 0.0, 0.0], 1.0, &t.cherry_leaves),
+            // Agua transparente (IOR 1.33): deja ver el fondo doblado y refleja mas de lado
+            water: add(Color::from_rgb(52, 98, 205), 80.0, [0.45, 0.6, 0.1, 0.75], 1.33, &t.water),
             // Obsidiana pulida: un reflejo leve que la hace ver como vidrio volcanico
-            obsidian: add(Color::from_rgb(22, 15, 34), 80.0, [0.6, 0.6, 0.15, 0.0], &t.obsidian),
+            obsidian: add(Color::from_rgb(22, 15, 34), 80.0, [0.6, 0.6, 0.15, 0.0], 1.0, &t.obsidian),
             // Portal y lampara: en la fase 17 se vuelven emisivos
-            portal: add(Color::from_rgb(128, 42, 214), 40.0, [0.8, 0.3, 0.0, 0.0], &t.portal),
-            lamp: add(Color::from_rgb(255, 214, 120), 20.0, [0.9, 0.2, 0.0, 0.0], &t.lamp),
-            stone_bricks: add(Color::from_rgb(122, 122, 122), 25.0, [0.8, 0.2, 0.0, 0.0], &t.stone_bricks),
+            portal: add(Color::from_rgb(128, 42, 214), 40.0, [0.8, 0.3, 0.0, 0.0], 1.0, &t.portal),
+            lamp: add(Color::from_rgb(255, 214, 120), 20.0, [0.9, 0.2, 0.0, 0.0], 1.0, &t.lamp),
+            stone_bricks: add(Color::from_rgb(122, 122, 122), 25.0, [0.8, 0.2, 0.0, 0.0], 1.0, &t.stone_bricks),
         }
     }
 }
@@ -167,7 +167,8 @@ fn around_center(angle: f32, distance: f32) -> (i32, i32) {
     )
 }
 
-// Estanque de 6x4: se hunde un bloque y se llena de agua hasta el nivel del borde
+// Estanque de 6x4 y 2 de profundidad, lleno de agua hasta el nivel del borde. El
+// fondo mezcla arena y piedra para que se note como la refraccion lo deforma
 fn carve_pond(map: &mut HeightMap, blocks: &Palette, angle: f32) -> Vec<(i32, i32, i32)> {
     let (px, pz) = around_center(angle, 8.0);
     let in_pond = |x: i32, z: i32| (px - 3..=px + 2).contains(&x) && (pz - 2..=pz + 1).contains(&z);
@@ -188,8 +189,9 @@ fn carve_pond(map: &mut HeightMap, blocks: &Palette, angle: f32) -> Vec<(i32, i3
     for x in px - 4..=px + 3 {
         for z in pz - 3..=pz + 2 {
             if in_pond(x, z) {
-                // Fondo de arena y agua encima
-                map.set_surface(x, z, level - 1, Some(blocks.sand));
+                let floor = if (x + z).rem_euclid(3) == 0 { blocks.stone } else { blocks.sand };
+                map.set_surface(x, z, level - 2, Some(floor));
+                water.push((x, level - 1, z));
                 water.push((x, level, z));
             } else if map.get(x, z).is_none_or(|column| column.surface < level) {
                 // El borde sube hasta el nivel del agua para que no se derrame

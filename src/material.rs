@@ -10,11 +10,9 @@ pub struct Material {
     pub textures: Option<&'static BlockTextures>,
     // Exponente de Phong: mas alto = brillo mas pequeno y concentrado
     pub specular: f32,
-    // Pesos de cada canal de luz: [difuso, especular, reflectividad, transparencia].
-    // Reflectividad se usa en la fase 14 y transparencia en la 15
+    // Pesos de cada canal de luz: [difuso, especular, reflectividad, transparencia]
     pub albedo: [f32; 4],
-    // Indice de refraccion (aire 1.0, agua 1.33, vidrio 1.5); se usa en la fase 15
-    #[allow(dead_code)]
+    // Indice de refraccion (aire 1.0, agua 1.33, vidrio 1.5): que tanto se dobla la luz
     pub refractive_index: f32,
 }
 

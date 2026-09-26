@@ -113,27 +113,35 @@ impl RayIntersect for World {
 
         // Eje de la ultima pared cruzada: da la normal de la cara del impacto
         let mut axis = bounds.enter_axis;
-        let mut first_cell = true;
+
+        // Si el rayo nace dentro de un bloque (un shadow ray por redondeo, o un rayo
+        // refractado dentro del agua), ese bloque es su "medio": se atraviesan las
+        // celdas del mismo tipo, porque la pared entre dos bloques de agua no es una
+        // superficie real, y se choca con el primer bloque distinto
+        let first = self.cells[self.index(cell.map(|value| value as usize))];
+        let mut medium = if starts_inside { first } else { AIR };
 
         loop {
-            let local = cell.map(|value| value as usize);
-            let block = self.cells[self.index(local)];
+            let block = self.cells[self.index(cell.map(|value| value as usize))];
 
-            // La celda donde nace un rayo que empieza adentro no cuenta: el rayo sale de ella
-            if block != AIR && !(first_cell && starts_inside) {
-                let material = self.materials[block as usize - 1];
-                let normal = axis_normal(axis, -step[axis] as f32);
-                let point = *ray_origin + *ray_direction * t;
-                let inside_block = point - min - Vec3::new(cell[0] as f32, cell[1] as f32, cell[2] as f32);
-                let local_point = Vec3::new(
-                    inside_block.x.clamp(0.0, 1.0),
-                    inside_block.y.clamp(0.0, 1.0),
-                    inside_block.z.clamp(0.0, 1.0),
-                );
-                let uv = face_uv(local_point, normal);
-                return Intersect::new(point, normal, t, uv, material);
+            if block != medium {
+                if block != AIR {
+                    let material = self.materials[block as usize - 1];
+                    let normal = axis_normal(axis, -step[axis] as f32);
+                    let point = *ray_origin + *ray_direction * t;
+                    let inside_block =
+                        point - min - Vec3::new(cell[0] as f32, cell[1] as f32, cell[2] as f32);
+                    let local_point = Vec3::new(
+                        inside_block.x.clamp(0.0, 1.0),
+                        inside_block.y.clamp(0.0, 1.0),
+                        inside_block.z.clamp(0.0, 1.0),
+                    );
+                    let uv = face_uv(local_point, normal);
+                    return Intersect::new(point, normal, t, uv, material);
+                }
+                // Salio del medio al aire: desde aqui cualquier bloque cuenta
+                medium = AIR;
             }
-            first_cell = false;
 
             // Avanza por el eje cuya pared esta mas cerca
             axis = if t_max[0] < t_max[1] {
@@ -225,6 +233,22 @@ mod tests {
     fn rayo_que_no_pasa_por_el_grid_no_choca() {
         let hit = mundo().ray_intersect(&Vec3::new(0.0, 5.0, 0.0), &Vec3::new(0.0, 1.0, 0.0));
         assert!(!hit.is_intersecting);
+    }
+
+    #[test]
+    fn rayo_dentro_del_agua_atraviesa_el_agua_y_choca_con_el_fondo() {
+        let mut world = mundo();
+        let material = Material::new(Color::new(0.0, 0.0, 1.0), 10.0, [1.0, 0.0, 0.0, 0.8], 1.33);
+        let water = world.add_material(material);
+        for x in -2..2 {
+            world.set(x, 1, -2, water);
+        }
+        // Nace dentro del agua y va en diagonal hacia abajo, cruzando a otro bloque de agua
+        let direction = Vec3::new(1.0, -0.3, 0.0).normalize();
+        let hit = world.ray_intersect(&Vec3::new(-1.9, 1.8, -1.5), &direction);
+        assert!(hit.is_intersecting);
+        assert_ne!(hit.material.albedo[3], 0.8, "no debe chocar con el agua");
+        assert_eq!(hit.normal, Vec3::new(0.0, 1.0, 0.0));
     }
 
     #[test]
