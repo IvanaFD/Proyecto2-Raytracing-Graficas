@@ -8,6 +8,7 @@ mod ray_intersect;
 mod render;
 mod texture;
 mod vec3;
+mod world;
 
 use std::thread;
 use std::time::Instant;
@@ -17,7 +18,6 @@ use raylib::prelude::{KeyboardKey, RaylibHandle, TraceLogLevel};
 use camera::Camera;
 
 use color::Color;
-use cube::{Cube, hide_touching_faces};
 use framebuffer::Framebuffer;
 use light::Light;
 use material::Material;
@@ -25,6 +25,7 @@ use ray_intersect::RayIntersect;
 use render::{RenderSettings, render};
 use texture::textures;
 use vec3::Vec3;
+use world::World;
 
 const WINDOW_WIDTH: i32 = 800;
 const WINDOW_HEIGHT: i32 = 600;
@@ -110,52 +111,53 @@ fn main() {
     let leaves = Material::new(Color::from_rgb(58, 122, 36), 8.0, [0.9, 0.1, 0.0, 0.0], 1.0)
         .textured(&textures.leaves);
 
-    // Diorama centrado en el origen para que la camara gire alrededor de el.
-    // Todos los bloques estan alineados a la cuadricula (esquinas enteras)
-    let mut blocks = vec![
-        // Una fila con cada material para compararlos
-        Cube::block(Vec3::new(-1.0, 1.0, 2.0), dirt),
-        Cube::block(Vec3::new(0.0, 1.0, 2.0), stone),
-        Cube::block(Vec3::new(1.0, 1.0, 2.0), sand),
-        Cube::block(Vec3::new(2.0, 1.0, 2.0), planks),
-        Cube::block(Vec3::new(2.0, 2.0, 2.0), planks),
-        Cube::block(Vec3::new(3.0, 1.0, 2.0), log),
-    ];
+    // Diorama centrado en el origen para que la camara gire alrededor de el:
+    // un grid de 10x8x10 celdas que va de (-5, 0, -5) a (5, 8, 5)
+    let mut world = World::new([-5, 0, -5], [10, 8, 10]);
+    let grass = world.add_material(grass);
+    let dirt = world.add_material(dirt);
+    let stone = world.add_material(stone);
+    let sand = world.add_material(sand);
+    let log = world.add_material(log);
+    let planks = world.add_material(planks);
+    let leaves = world.add_material(leaves);
 
-    // Arbol: tronco de 4 bloques y copa de hojas
-    let (tree_x, tree_z) = (-2, -2);
-    for y in 1..5 {
-        blocks.push(Cube::block(Vec3::new(tree_x as f32, y as f32, tree_z as f32), log));
+    // Piso de bloques de pasto de 10x10
+    for x in -5..5 {
+        for z in -5..5 {
+            world.set(x, 0, z, grass);
+        }
     }
+
+    // Una fila con cada material para compararlos
+    world.set(-1, 1, 2, dirt);
+    world.set(0, 1, 2, stone);
+    world.set(1, 1, 2, sand);
+    world.set(2, 1, 2, planks);
+    world.set(2, 2, 2, planks);
+    world.set(3, 1, 2, log);
+
+    // Arbol: copa de hojas y tronco de 4 bloques (el tronco va despues para
+    // reemplazar las hojas que caen en su columna)
+    let (tree_x, tree_z) = (-2, -2);
     for y in 3..6 {
         // La copa se angosta arriba
         let reach: i32 = if y == 5 { 1 } else { 2 };
         for dx in -reach..=reach {
             for dz in -reach..=reach {
-                let is_trunk = dx == 0 && dz == 0 && y < 5;
                 // Sin las esquinas para que la copa se vea redondeada
-                let is_corner = dx.abs() == reach && dz.abs() == reach;
-                if !is_trunk && !is_corner {
-                    let position = Vec3::new((tree_x + dx) as f32, y as f32, (tree_z + dz) as f32);
-                    blocks.push(Cube::block(position, leaves));
+                if dx.abs() != reach || dz.abs() != reach {
+                    world.set(tree_x + dx, y, tree_z + dz, leaves);
                 }
             }
         }
     }
-
-    // Piso de bloques de pasto de 10x10
-    for x in -5..5 {
-        for z in -5..5 {
-            blocks.push(Cube::block(Vec3::new(x as f32, 0.0, z as f32), grass));
-        }
+    for y in 1..5 {
+        world.set(tree_x, y, tree_z, log);
     }
 
-    hide_touching_faces(&mut blocks);
-
-    let objects: Vec<Box<dyn RayIntersect>> = blocks
-        .into_iter()
-        .map(|block| Box::new(block) as Box<dyn RayIntersect>)
-        .collect();
+    // Todo el mundo es un solo objeto: el DDA ya sabe donde esta cada bloque
+    let objects: Vec<Box<dyn RayIntersect>> = vec![Box::new(world)];
 
     // Arriba y a un lado del diorama, para que las sombras se vean largas
     let lights = [Light::new(
