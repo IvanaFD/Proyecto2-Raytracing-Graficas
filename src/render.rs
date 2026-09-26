@@ -1,5 +1,9 @@
+use std::sync::Mutex;
+use std::thread;
+
+use crate::camera::Camera;
 use crate::color::Color;
-use crate::framebuffer::Framebuffer;
+use crate::framebuffer::CHANNELS;
 use crate::light::Light;
 use crate::ray_intersect::{Intersect, RayIntersect};
 use crate::vec3::Vec3;
@@ -8,7 +12,7 @@ const SKY_HORIZON: Color = Color::from_rgb(200, 225, 255);
 const SKY_ZENITH: Color = Color::from_rgb(60, 120, 215);
 
 // Luz minima que llega a todos lados, para que lo que no ve la luz no quede negro
-const AMBIENT: f32 = 0.15;
+const AMBIENT: f32 = 0.3;
 
 // Cuanto se despega el origen del shadow ray de la superficie, para que no
 // choque con la misma cara de la que sale ("shadow acne")
@@ -17,6 +21,11 @@ const SHADOW_BIAS: f32 = 1e-3;
 // Ancho del contorno de cada bloque: 1 texel de una textura de 16x16
 const BLOCK_EDGE: f32 = 1.0 / 16.0;
 const BLOCK_EDGE_SHADE: f32 = 0.7;
+
+// Filas de bloques de pixeles que toma un hilo cada vez. Bandas pequenas
+// reparten mejor el trabajo: una banda con mucho cielo termina rapido y el
+// hilo toma otra en lugar de quedarse esperando
+const BAND_BLOCK_ROWS: usize = 4;
 
 // Color de la superficie en el punto: el del material con el borde de la cara
 // oscurecido, para que se note donde termina un bloque y empieza el otro.
@@ -121,22 +130,78 @@ pub fn cast_ray(
     color
 }
 
-pub fn render(framebuffer: &mut Framebuffer, objects: &[Box<dyn RayIntersect>], lights: &[Light]) {
-    let width = framebuffer.width as f32;
-    let height = framebuffer.height as f32;
-    let aspect_ratio = width / height;
-    let camera_position = Vec3::new(0.0, 0.0, 0.0);
+// Como trazar un frame: cuantos hilos usar y cada cuantos pixeles lanzar un rayo.
+// Con scale = 2 se lanza un rayo por cada bloque de 2x2 pixeles (4 veces menos rayos)
+pub struct RenderSettings {
+    pub threads: usize,
+    pub scale: usize,
+}
 
-    for y in 0..framebuffer.height {
-        for x in 0..framebuffer.width {
-            let screen_x = (2.0 * x as f32) / width - 1.0;
-            let screen_y = -(2.0 * y as f32) / height + 1.0;
-            let screen_x = screen_x * aspect_ratio;
+// Traza la escena sobre `pixels` (RGBA, fila por fila, width x height)
+pub fn render(
+    pixels: &mut [u8],
+    width: usize,
+    height: usize,
+    objects: &[Box<dyn RayIntersect>],
+    lights: &[Light],
+    camera: &Camera,
+    settings: &RenderSettings,
+) {
+    let aspect_ratio = width as f32 / height as f32;
+    // Con el fov se decide que tan abierta es la vista: a 90 grados la escala es 1
+    let fov_scale = (camera.fov / 2.0).tan();
+    let frame = camera.frame();
+    let scale = settings.scale.max(1);
 
-            let ray_direction = Vec3::new(screen_x, screen_y, -1.0).normalize();
+    // Color del pixel (x, y) de la pantalla; x e y pueden tener decimales
+    let trace_pixel = |x: f32, y: f32| -> [u8; 3] {
+        let screen_x = (2.0 * x) / width as f32 - 1.0;
+        let screen_y = -(2.0 * y) / height as f32 + 1.0;
+        let screen_x = screen_x * aspect_ratio * fov_scale;
+        let screen_y = screen_y * fov_scale;
 
-            let pixel_color = cast_ray(&camera_position, &ray_direction, objects, lights);
-            framebuffer.set_pixel(x, y, pixel_color.to_bytes());
+        // Direccion en espacio de camara, pasada a espacio mundo
+        let ray_direction = frame.ray_direction(&Vec3::new(screen_x, screen_y, -1.0));
+        cast_ray(&frame.eye, &ray_direction, objects, lights).to_bytes()
+    };
+
+    // Cada banda es un pedazo contiguo del framebuffer con varias filas completas.
+    // Cada hilo escribe solo en la banda que tomo, asi que no hacen falta locks
+    // para los pixeles: el Mutex solo protege "cual es la siguiente banda"
+    let row_bytes = width * CHANNELS;
+    let band_rows = BAND_BLOCK_ROWS * scale;
+    let bands = Mutex::new(pixels.chunks_mut(row_bytes * band_rows).enumerate());
+
+    thread::scope(|scope| {
+        for _ in 0..settings.threads.max(1) {
+            scope.spawn(|| {
+                loop {
+                    let next = bands.lock().unwrap().next();
+                    let Some((band_index, band)) = next else {
+                        break;
+                    };
+                    let first_row = band_index * band_rows;
+                    let rows = band.len() / row_bytes;
+
+                    for block_y in (0..rows).step_by(scale) {
+                        for block_x in (0..width).step_by(scale) {
+                            // Un rayo por el centro del bloque de scale x scale pixeles
+                            let center = scale as f32 / 2.0;
+                            let y = (first_row + block_y) as f32 + center;
+                            let rgb = trace_pixel(block_x as f32 + center, y);
+
+                            // Se copia el mismo color a todo el bloque
+                            for py in block_y..(block_y + scale).min(rows) {
+                                for px in block_x..(block_x + scale).min(width) {
+                                    let index = py * row_bytes + px * CHANNELS;
+                                    band[index..index + CHANNELS]
+                                        .copy_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
         }
-    }
+    });
 }

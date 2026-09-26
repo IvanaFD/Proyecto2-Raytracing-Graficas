@@ -16,6 +16,15 @@ impl Vec3 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
+    // Vector perpendicular a ambos (regla de la mano derecha)
+    pub fn cross(&self, other: &Vec3) -> Vec3 {
+        Vec3::new(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x,
+        )
+    }
+
     pub fn length(&self) -> f32 {
         self.dot(self).sqrt()
     }
@@ -100,6 +109,16 @@ mod tests {
         assert_eq!(x.dot(&y), 0.0);
         assert_eq!(x.dot(&-x), -1.0);
         assert_eq!(Vec3::new(1.0, 2.0, 3.0).dot(&Vec3::new(4.0, 5.0, 6.0)), 32.0);
+    }
+
+    #[test]
+    fn producto_cruz() {
+        let x = Vec3::new(1.0, 0.0, 0.0);
+        let y = Vec3::new(0.0, 1.0, 0.0);
+        let z = Vec3::new(0.0, 0.0, 1.0);
+        assert_eq!(x.cross(&y), z);
+        assert_eq!(y.cross(&z), x);
+        assert_eq!(y.cross(&x), -z);
     }
 
     #[test]
