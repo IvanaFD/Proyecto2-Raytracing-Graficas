@@ -14,6 +14,8 @@ pub struct Material {
     pub albedo: [f32; 4],
     // Indice de refraccion (aire 1.0, agua 1.33, vidrio 1.5): que tanto se dobla la luz
     pub refractive_index: f32,
+    // Luz propia (0 = no emite). Se multiplica por el color de la textura
+    pub emission: f32,
 }
 
 impl Material {
@@ -24,7 +26,12 @@ impl Material {
             specular,
             albedo,
             refractive_index,
+            emission: 0.0,
         }
+    }
+
+    pub const fn emissive(self, emission: f32) -> Self {
+        Material { emission, ..self }
     }
 
     pub const fn textured(self, textures: &'static BlockTextures) -> Self {

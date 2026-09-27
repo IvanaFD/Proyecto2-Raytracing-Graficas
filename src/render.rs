@@ -21,6 +21,10 @@ const MAX_DEPTH: u32 = 3;
 // Cuanto tine un material transparente la luz que lo atraviesa (0 = nada, 1 = su color)
 const TRANSPARENT_TINT: f32 = 0.35;
 
+// Mas alla de esta distancia una luz de bloque (lampara, portal) ya casi no aporta
+// y se salta, para no lanzar shadow rays de mas
+const POINT_LIGHT_RANGE: f32 = 14.0;
+
 // Cuantas superficies transparentes puede cruzar un shadow ray antes de rendirse
 const MAX_SHADOW_LAYERS: u32 = 4;
 
@@ -112,6 +116,7 @@ fn light_visibility(
     intersect: &Intersect,
     light_direction: &Vec3,
     light_distance: f32,
+    emitter_radius: f32,
     objects: &[Box<dyn RayIntersect>],
 ) -> f32 {
     let mut origin = intersect.point + intersect.normal * SHADOW_BIAS;
@@ -127,8 +132,9 @@ fn light_visibility(
             }
         }
 
-        // Lo que esta detras de la luz no le hace sombra al punto
-        if !nearest.is_intersecting || nearest.distance >= remaining {
+        // Lo que esta detras de la luz no le hace sombra al punto, y tampoco el
+        // bloque que emite la luz (lo que se choque a menos de `emitter_radius` de ella)
+        if !nearest.is_intersecting || nearest.distance >= remaining - emitter_radius {
             return visibility;
         }
 
@@ -158,15 +164,29 @@ fn shade(
     let light_distance = to_light.length();
     let light_direction = to_light / light_distance;
 
+    // Lambert: la cara recibe mas luz mientras mas de frente la mire
+    let diffuse_intensity = intersect.normal.dot(&light_direction);
+
+    // Sin shadow ray si la cara le da la espalda a la luz o si es una luz de bloque
+    // demasiado lejana para notarse
+    let too_far = light.falloff > 0.0 && light_distance > POINT_LIGHT_RANGE;
+    if diffuse_intensity <= 0.0 || too_far {
+        return Color::default();
+    }
+
     // En sombra solo queda la luz ambiente
-    let visibility = light_visibility(intersect, &light_direction, light_distance, objects);
+    let visibility = light_visibility(
+        intersect,
+        &light_direction,
+        light_distance,
+        light.radius,
+        objects,
+    );
     if visibility <= 0.0 {
         return Color::default();
     }
-    let light_color = light.color * (light.intensity * visibility);
+    let light_color = light.color * (light.intensity_at(light_distance) * visibility);
 
-    // Lambert: la cara recibe mas luz mientras mas de frente la mire
-    let diffuse_intensity = intersect.normal.dot(&light_direction).max(0.0);
     let diffuse = *surface * light_color * (diffuse_intensity * material.albedo[0]);
 
     // Phong: que tan alineado esta el reflejo de la luz con el ojo
@@ -217,6 +237,10 @@ pub fn cast_ray(ray_origin: &Vec3, ray_direction: &Vec3, scene: &Scene, depth: u
     for light in &scene.lights {
         color = color + shade(&intersect, &surface, &view_direction, light, objects);
     }
+
+    // Emision: la luz propia del bloque se suma sin depender de ninguna luz ni sombra.
+    // Se multiplica por la textura para que se siga viendo su dibujo
+    color = color + surface * intersect.material.emission;
 
     if depth >= MAX_DEPTH {
         return color;

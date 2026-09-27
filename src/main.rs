@@ -48,10 +48,19 @@ const INITIAL_SEED: u64 = 2026;
 const SUN_DIRECTION: Vec3 = Vec3::new(-0.83, 0.3, 0.56);
 const SUN_DISTANCE: f32 = 300.0;
 
-// Todo el mundo es un solo objeto: el DDA ya sabe donde esta cada bloque
-fn build_objects(seed: u64) -> Vec<Box<dyn RayIntersect>> {
+// Genera la isla y arma la lista de objetos y de luces de la escena. Todo el
+// mundo es un solo objeto: el DDA ya sabe donde esta cada bloque
+fn build_island(seed: u64, sun: Light) -> (Vec<Box<dyn RayIntersect>>, Vec<Light>) {
     println!("Isla generada con la semilla {seed}");
-    vec![Box::new(terrain::generate(seed))]
+    let island = terrain::generate(seed);
+    let mut lights = vec![sun];
+    lights.extend(island.lights);
+    (vec![Box::new(island.world)], lights)
+}
+
+// El sol del atardecer: lejos, bajo y naranja, con sombras largas
+fn sun() -> Light {
+    Light::sun(SUN_DIRECTION.normalize() * SUN_DISTANCE, Color::new(1.0, 0.66, 0.42), 1.25)
 }
 
 // Mueve la camara segun las teclas presionadas. Devuelve si cambio algo
@@ -111,14 +120,12 @@ fn main() {
     let mut seed = INITIAL_SEED;
     let sun_direction = SUN_DIRECTION.normalize();
 
+    let (objects, lights) = build_island(seed, sun());
+
     let mut scene = Scene {
-        objects: build_objects(seed),
-        // El sol del atardecer: lejos, bajo y naranja, con sombras largas
-        lights: vec![Light::new(
-            sun_direction * SUN_DISTANCE,
-            Color::new(1.0, 0.66, 0.42),
-            1.25,
-        )],
+        objects,
+        // El sol y las luces de los bloques emisivos (lamparas y portal)
+        lights,
         skybox: Skybox::sunset(sun_direction),
         // Lo que no ve el sol queda en penumbra morada, como el cielo
         ambient: Color::new(0.3, 0.22, 0.34),
@@ -146,7 +153,7 @@ fn main() {
         // G genera otra isla con la siguiente semilla
         if window.is_key_pressed(KeyboardKey::KEY_G) {
             seed += 1;
-            scene.objects = build_objects(seed);
+            (scene.objects, scene.lights) = build_island(seed, sun());
             needs_full_render = true;
         }
 
