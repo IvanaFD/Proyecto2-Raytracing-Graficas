@@ -146,6 +146,9 @@ const OBSIDIAN_BLACK: Color = Color::from_rgb(22, 15, 34);
 const OBSIDIAN_PURPLE: Color = Color::from_rgb(66, 40, 100);
 const PORTAL_PURPLE: Color = Color::from_rgb(128, 42, 214);
 const LAMP_YELLOW: Color = Color::from_rgb(255, 214, 120);
+const FOAM_WHITE: Color = Color::from_rgb(214, 232, 255);
+const WOOL_BLUE: Color = Color::from_rgb(52, 84, 190);
+const WOOL_WHITE: Color = Color::from_rgb(234, 236, 236);
 const LAMP_FRAME: Color = Color::from_rgb(92, 58, 30);
 const BRICK_GRAY: Color = Color::from_rgb(122, 122, 122);
 
@@ -275,6 +278,26 @@ fn lamp(x: usize, y: usize) -> Color {
     }
 }
 
+// Agua cayendo: vetas verticales de espuma que bajan por la cascada
+fn waterfall(x: usize, y: usize) -> Color {
+    let streak = hash(x, 0, 27);
+    let flow = hash(x, y / 3, 28);
+    let base = WATER_BLUE * (0.95 + 0.2 * hash(x, y, 29));
+    if streak > 0.55 && flow > 0.35 {
+        base.lerp(&FOAM_WHITE, 0.55 + 0.3 * flow)
+    } else {
+        base
+    }
+}
+
+// Lana: tejido suave con un poco de grano, para el toldo del puesto
+fn wool(color: Color) -> impl Fn(usize, usize) -> Color {
+    move |x, y| {
+        let weave = if (x + y) % 2 == 0 { 1.0 } else { 0.94 };
+        color * (weave * (0.9 + 0.12 * hash(x, y, 30)))
+    }
+}
+
 // Ladrillos de piedra: filas de 4 px de alto con las juntas alternadas
 fn stone_bricks(x: usize, y: usize) -> Color {
     let row = y / 4;
@@ -302,6 +325,9 @@ pub struct TextureSet {
     pub portal: BlockTextures,
     pub lamp: BlockTextures,
     pub stone_bricks: BlockTextures,
+    pub waterfall: BlockTextures,
+    pub blue_wool: BlockTextures,
+    pub white_wool: BlockTextures,
 }
 
 impl TextureSet {
@@ -330,6 +356,9 @@ impl TextureSet {
             portal: same_on_all_faces(portal),
             lamp: same_on_all_faces(lamp),
             stone_bricks: same_on_all_faces(stone_bricks).with_normal_map(BRICK_RELIEF),
+            waterfall: same_on_all_faces(waterfall),
+            blue_wool: same_on_all_faces(wool(WOOL_BLUE)),
+            white_wool: same_on_all_faces(wool(WOOL_WHITE)),
         }
     }
 }
