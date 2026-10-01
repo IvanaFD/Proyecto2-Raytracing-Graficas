@@ -46,21 +46,36 @@ const INITIAL_SEED: u64 = 2026;
 // Direccion hacia el sol: bajo en el horizonte, como al atardecer. La usan el
 // skybox (donde se dibuja el sol) y la luz (de donde vienen las sombras)
 const SUN_DIRECTION: Vec3 = Vec3::new(-0.83, 0.3, 0.56);
-const SUN_DISTANCE: f32 = 300.0;
+// De noche la luna sale del otro lado, mas alta
+const MOON_DIRECTION: Vec3 = Vec3::new(0.55, 0.5, -0.65);
+const SKY_LIGHT_DISTANCE: f32 = 300.0;
+
+// Luz ambiente: al atardecer la penumbra es morada; de noche casi negra, para que
+// resalten el portal, el magma y los faroles
+const SUNSET_AMBIENT: Color = Color::new(0.3, 0.22, 0.34);
+const NIGHT_AMBIENT: Color = Color::new(0.06, 0.07, 0.13);
 
 // Genera la isla y arma la lista de objetos y de luces de la escena. Todo el
 // mundo es un solo objeto: el DDA ya sabe donde esta cada bloque
-fn build_island(seed: u64, sun: Light) -> (Vec<Box<dyn RayIntersect>>, Vec<Light>) {
+fn build_island(seed: u64, sky_light: Light) -> (Vec<Box<dyn RayIntersect>>, Vec<Light>) {
     println!("Isla generada con la semilla {seed}");
     let island = terrain::generate(seed);
-    let mut lights = vec![sun];
+    // La primera luz siempre es la del cielo (sol o luna)
+    let mut lights = vec![sky_light];
     lights.extend(island.lights);
     (vec![Box::new(island.world)], lights)
 }
 
-// El sol del atardecer: lejos, bajo y naranja, con sombras largas
-fn sun() -> Light {
-    Light::sun(SUN_DIRECTION.normalize() * SUN_DISTANCE, Color::new(1.0, 0.66, 0.42), 1.25)
+// La luz del cielo: de dia el sol del atardecer (bajo y naranja, con sombras largas)
+// y de noche la luna (tenue y azulada)
+fn sky_light(night: bool) -> Light {
+    if night {
+        let position = MOON_DIRECTION.normalize() * SKY_LIGHT_DISTANCE;
+        Light::sun(position, Color::new(0.55, 0.62, 0.9), 0.35)
+    } else {
+        let position = SUN_DIRECTION.normalize() * SKY_LIGHT_DISTANCE;
+        Light::sun(position, Color::new(1.0, 0.66, 0.42), 1.25)
+    }
 }
 
 // Mueve la camara segun las teclas presionadas. Devuelve si cambio algo
@@ -118,19 +133,21 @@ fn main() {
 
     // La isla se genera a partir de una semilla; con G se genera otra
     let mut seed = INITIAL_SEED;
-    let sun_direction = SUN_DIRECTION.normalize();
+    let mut night = false;
 
-    let (objects, lights) = build_island(seed, sun());
+    let (objects, lights) = build_island(seed, sky_light(night));
 
     let mut scene = Scene {
         objects,
         // El sol y las luces de los bloques emisivos (lamparas y portal)
         lights,
-        skybox: Skybox::sunset(sun_direction),
-        // Lo que no ve el sol queda en penumbra morada, como el cielo
-        ambient: Color::new(0.3, 0.22, 0.34),
+        skybox: Skybox::sunset(SUN_DIRECTION),
+        ambient: SUNSET_AMBIENT,
         normal_maps: true,
     };
+
+    // El cielo que no se esta usando; con L se intercambia con el de la escena
+    let mut other_skybox = Skybox::night(MOON_DIRECTION);
 
     let mut camera = Camera {
         // A media altura entre la parte de abajo de la isla y la copa del arbol
@@ -153,7 +170,17 @@ fn main() {
         // G genera otra isla con la siguiente semilla
         if window.is_key_pressed(KeyboardKey::KEY_G) {
             seed += 1;
-            (scene.objects, scene.lights) = build_island(seed, sun());
+            (scene.objects, scene.lights) = build_island(seed, sky_light(night));
+            needs_full_render = true;
+        }
+
+        // L cambia entre atardecer y noche
+        if window.is_key_pressed(KeyboardKey::KEY_L) {
+            night = !night;
+            std::mem::swap(&mut scene.skybox, &mut other_skybox);
+            scene.lights[0] = sky_light(night);
+            scene.ambient = if night { NIGHT_AMBIENT } else { SUNSET_AMBIENT };
+            println!("{}", if night { "Noche" } else { "Atardecer" });
             needs_full_render = true;
         }
 
