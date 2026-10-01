@@ -16,6 +16,8 @@ pub struct World {
     size: [usize; 3],
     cells: Vec<BlockId>,
     materials: Vec<Material>,
+    // Por material: si es una planta (dos planos cruzados) en lugar de un cubo
+    plants: Vec<bool>,
 }
 
 impl World {
@@ -26,12 +28,24 @@ impl World {
             size,
             cells: vec![AIR; size[0] * size[1] * size[2]],
             materials: Vec::new(),
+            plants: Vec::new(),
         }
     }
 
-    // Registra un material y devuelve el id con el que se colocan sus bloques
+    // Registra un material de bloque y devuelve el id con el que se colocan
     pub fn add_material(&mut self, material: Material) -> BlockId {
+        self.register(material, false)
+    }
+
+    // Registra una planta (flor, pasto): como en Minecraft no es un cubo sino dos
+    // planos que se cruzan en diagonal dentro de la celda
+    pub fn add_plant(&mut self, material: Material) -> BlockId {
+        self.register(material, true)
+    }
+
+    fn register(&mut self, material: Material, plant: bool) -> BlockId {
         self.materials.push(material);
+        self.plants.push(plant);
         assert!(self.materials.len() <= BlockId::MAX as usize, "demasiados materiales");
         self.materials.len() as BlockId
     }
@@ -56,7 +70,6 @@ impl World {
     }
 
     // Bloque en coordenadas del mundo; fuera del grid es aire
-    #[allow(dead_code)]
     pub fn get(&self, x: i32, y: i32, z: i32) -> BlockId {
         self.local(x, y, z).map_or(AIR, |cell| self.cells[self.index(cell)])
     }
@@ -68,6 +81,53 @@ impl World {
     fn max_corner(&self) -> Vec3 {
         self.min_corner() + Vec3::new(self.size[0] as f32, self.size[1] as f32, self.size[2] as f32)
     }
+}
+
+// Choque con una planta: dos planos verticales en diagonal que se cruzan en el centro
+// de la celda (x = z y x + z = 1 en coordenadas de la celda). Solo cuenta si el rayo
+// los cruza mientras esta dentro de la celda (entre t_in y t_out) y si en ese punto
+// el sprite no es transparente
+fn plant_hit(
+    material: Material,
+    ray_origin: &Vec3,
+    ray_direction: &Vec3,
+    cell_corner: Vec3,
+    t_in: f32,
+    t_out: f32,
+) -> Option<Intersect> {
+    const SLACK: f32 = 1e-4;
+    let o = *ray_origin - cell_corner;
+    let d = *ray_direction;
+
+    // t donde el rayo cruza cada plano: x - z = 0 y x + z = 1
+    let planes = [
+        (d.x - d.z != 0.0).then(|| (o.z - o.x) / (d.x - d.z)),
+        (d.x + d.z != 0.0).then(|| (1.0 - o.x - o.z) / (d.x + d.z)),
+    ];
+
+    // Como en Minecraft, la planta se ilumina con la normal del suelo (hacia arriba)
+    // y no con la de cada plano: toma la misma luz que el pasto donde crece, y un
+    // plano visto de canto no se ve como una linea brillante
+    let normal = Vec3::new(0.0, 1.0, 0.0);
+
+    let mut nearest: Option<Intersect> = None;
+    for t in planes {
+        let Some(t) = t else {
+            continue;
+        };
+        if t < t_in - SLACK || t > t_out + SLACK || t <= SLACK {
+            continue;
+        }
+        let p = o + d * t;
+        let inside = [p.x, p.y, p.z].iter().all(|value| (-SLACK..=1.0 + SLACK).contains(value));
+        let (u, v) = (p.x.clamp(0.0, 1.0), (1.0 - p.y).clamp(0.0, 1.0));
+        let opaque = material.textures.is_none_or(|textures| textures.side.is_opaque(u, v));
+        if !inside || !opaque || nearest.as_ref().is_some_and(|hit| hit.distance <= t) {
+            continue;
+        }
+        nearest = Some(Intersect::new(*ray_origin + d * t, normal, t, (u, v), material));
+    }
+    nearest
 }
 
 // Recorrido 3D-DDA (Amanatides & Woo): el rayo avanza de celda en celda, siempre a
@@ -125,12 +185,19 @@ impl RayIntersect for World {
             let block = self.cells[self.index(cell.map(|value| value as usize))];
 
             if block != medium {
-                if block != AIR {
+                let cell_corner = min + Vec3::new(cell[0] as f32, cell[1] as f32, cell[2] as f32);
+                if block != AIR && self.plants[block as usize - 1] {
+                    // La planta ocupa solo parte de la celda: si el rayo no la toca sigue
+                    let t_out = t_max[0].min(t_max[1]).min(t_max[2]);
+                    let material = self.materials[block as usize - 1];
+                    if let Some(hit) = plant_hit(material, ray_origin, ray_direction, cell_corner, t, t_out) {
+                        return hit;
+                    }
+                } else if block != AIR {
                     let material = self.materials[block as usize - 1];
                     let normal = axis_normal(axis, -step[axis] as f32);
                     let point = *ray_origin + *ray_direction * t;
-                    let inside_block =
-                        point - min - Vec3::new(cell[0] as f32, cell[1] as f32, cell[2] as f32);
+                    let inside_block = point - cell_corner;
                     let local_point = Vec3::new(
                         inside_block.x.clamp(0.0, 1.0),
                         inside_block.y.clamp(0.0, 1.0),
@@ -249,6 +316,27 @@ mod tests {
         assert!(hit.is_intersecting);
         assert_ne!(hit.material.albedo[3], 0.8, "no debe chocar con el agua");
         assert_eq!(hit.normal, Vec3::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn una_planta_es_dos_planos_cruzados_con_partes_transparentes() {
+        let mut world = mundo();
+        let flower = Material::new(Color::new(1.0, 0.0, 1.0), 10.0, [1.0, 0.0, 0.0, 0.0], 1.0)
+            .textured(&crate::texture::textures().allium);
+        let flower = world.add_plant(flower);
+        world.set(-1, 1, -1, flower);
+
+        // Por el centro de la celda, a la altura del tallo: choca con la planta donde
+        // se cruzan los planos, iluminada como el suelo (normal hacia arriba)
+        let hit = world.ray_intersect(&Vec3::new(-0.5, 1.2, 5.0), &Vec3::new(0.0, 0.0, -1.0));
+        assert!(hit.is_intersecting);
+        assert_eq!(hit.material.diffuse, Color::new(1.0, 0.0, 1.0));
+        assert!((hit.point.z - (-0.5)).abs() < TOLERANCE);
+        assert_eq!(hit.normal, Vec3::new(0.0, 1.0, 0.0));
+
+        // Por la fila de arriba del sprite, que es transparente: pasa de largo
+        let miss = world.ray_intersect(&Vec3::new(-0.5, 1.97, 5.0), &Vec3::new(0.0, 0.0, -1.0));
+        assert!(!miss.is_intersecting);
     }
 
     #[test]

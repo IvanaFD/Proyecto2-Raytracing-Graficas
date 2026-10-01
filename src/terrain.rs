@@ -1,5 +1,6 @@
 // Generacion procedural de la isla flotante: colina en terrazas, parte de abajo de
-// piedra que se angosta, estanque, arbol de sakura y portal con dos lamparas.
+// piedra que se angosta, estanque con cascada, arbol de sakura, portal en ruinas y
+// un puesto de mercado con faroles.
 // Todo depende de la semilla: otra semilla da otra isla
 
 use std::f32::consts::TAU;
@@ -10,7 +11,7 @@ use crate::material::Material;
 use crate::noise::{Rng, fbm};
 use crate::vec3::Vec3;
 use crate::texture::textures;
-use crate::world::{BlockId, World};
+use crate::world::{AIR, BlockId, World};
 
 // El grid va de -16 a 16 en x y z, y de -14 a 26 en y
 const HALF_SIZE: i32 = 16;
@@ -43,6 +44,11 @@ struct Palette {
     waterfall: BlockId,
     blue_wool: BlockId,
     white_wool: BlockId,
+    netherrack: BlockId,
+    magma: BlockId,
+    // Plantas: flores (moradas como las de la foto, rojas y amarillas) y pasto alto
+    flowers: [BlockId; 3],
+    grass_tuft: BlockId,
 }
 
 impl Palette {
@@ -51,12 +57,27 @@ impl Palette {
     // El color base es el tono promedio del bloque; lo que se ve es la textura
     fn register(world: &mut World) -> Self {
         let t = textures();
+
+        // Plantas: dos planos cruzados con partes transparentes. Sin especular: vistos
+        // de canto, el brillo haria lineas claras
+        let plant = |color: Color, textures| {
+            Material::new(color, 1.0, [0.95, 0.0, 0.0, 0.0], 1.0).textured(textures)
+        };
+        let flowers = [
+            world.add_plant(plant(Color::from_rgb(178, 110, 230), &t.allium)),
+            world.add_plant(plant(Color::from_rgb(220, 40, 36), &t.poppy)),
+            world.add_plant(plant(Color::from_rgb(250, 214, 50), &t.dandelion)),
+        ];
+        let grass_tuft = world.add_plant(plant(Color::from_rgb(92, 158, 58), &t.grass_tuft));
+
         let mut add = |color: Color, specular: f32, albedo: [f32; 4], ior: f32, emission: f32, textures| {
             let material = Material::new(color, specular, albedo, ior).emissive(emission);
             world.add_material(material.textured(textures))
         };
 
         Palette {
+            flowers,
+            grass_tuft,
             grass: add(Color::from_rgb(106, 170, 64), 10.0, [0.9, 0.1, 0.0, 0.0], 1.0, 0.0, &t.grass),
             dirt: add(Color::from_rgb(134, 96, 67), 5.0, [0.95, 0.05, 0.0, 0.0], 1.0, 0.0, &t.dirt),
             stone: add(Color::from_rgb(128, 128, 128), 30.0, [0.8, 0.25, 0.0, 0.0], 1.0, 0.0, &t.stone),
@@ -77,6 +98,9 @@ impl Palette {
             // Lana del toldo del puesto: mate
             blue_wool: add(Color::from_rgb(52, 84, 190), 4.0, [0.95, 0.05, 0.0, 0.0], 1.0, 0.0, &t.blue_wool),
             white_wool: add(Color::from_rgb(234, 236, 236), 4.0, [0.95, 0.05, 0.0, 0.0], 1.0, 0.0, &t.white_wool),
+            // Bloques del portal en ruinas: netherrack con relieve y magma que brilla
+            netherrack: add(Color::from_rgb(112, 44, 44), 15.0, [0.85, 0.15, 0.0, 0.0], 1.0, 0.0, &t.netherrack),
+            magma: add(Color::from_rgb(255, 128, 32), 20.0, [0.8, 0.2, 0.0, 0.0], 1.0, 1.5, &t.magma),
         }
     }
 }
@@ -269,9 +293,10 @@ fn carve_pond(map: &mut HeightMap, blocks: &Palette, angle: f32) -> Vec<WaterBlo
     water
 }
 
-// Puesto de mercado como el de la foto: postes de tronco, mostrador de tablas y un
-// toldo de lana a rayas azules y blancas con techo de dos aguas
-fn build_stall(map: &mut HeightMap, world: &mut World, blocks: &Palette, angle: f32) {
+// Puesto de mercado como el de la foto: postes de tronco, mostrador de tablas, un
+// toldo de lana a rayas azules y blancas con techo de dos aguas y dos faroles al
+// frente. Devuelve las luces de los faroles
+fn build_stall(map: &mut HeightMap, world: &mut World, blocks: &Palette, angle: f32) -> Vec<Light> {
     let (sx, sz) = around_center(angle, 6.0);
     let floor = map.get(sx, sz).map_or(2, |column| column.surface);
 
@@ -305,6 +330,16 @@ fn build_stall(map: &mut HeightMap, world: &mut World, blocks: &Palette, angle: 
             }
         }
     }
+
+    // Faroles a los lados del frente, fuera del toldo
+    [sx - 3, sx + 2]
+        .into_iter()
+        .map(|x| {
+            let z = sz + 3;
+            map.set_surface(x, z, floor, None);
+            lantern(world, blocks, x, floor, z)
+        })
+        .collect()
 }
 
 // Color e intensidad de la luz que emite cada tipo de bloque
@@ -312,57 +347,141 @@ const LAMP_LIGHT: Color = Color::new(1.0, 0.72, 0.38);
 const LAMP_INTENSITY: f32 = 2.2;
 const PORTAL_LIGHT: Color = Color::new(0.72, 0.32, 1.0);
 const PORTAL_INTENSITY: f32 = 2.6;
+const MAGMA_LIGHT: Color = Color::new(1.0, 0.45, 0.15);
+const MAGMA_INTENSITY: f32 = 1.5;
 // Media diagonal de un bloque: los shadow rays ignoran el bloque de la lampara
 const BLOCK_RADIUS: f32 = 0.87;
+// Hasta donde se extiende el netherrack alrededor del portal
+const RUIN_RADIUS: f32 = 5.5;
 
-// Plaza de ladrillos de 8x4 con el portal atras y un poste con lampara a cada lado.
-// Devuelve las luces que emiten el portal y las lamparas
-fn build_portal(map: &mut HeightMap, world: &mut World, blocks: &Palette, angle: f32) -> Vec<Light> {
-    let (qx, qz) = around_center(angle, 6.5);
+// Poste de tronco de 2 de alto con una lampara arriba. Devuelve la luz de la lampara
+fn lantern(world: &mut World, blocks: &Palette, x: i32, floor: i32, z: i32) -> Light {
+    world.set(x, floor + 1, z, blocks.log);
+    world.set(x, floor + 2, z, blocks.log);
+    world.set(x, floor + 3, z, blocks.lamp);
+    Light::point(
+        Vec3::new(x as f32 + 0.5, floor as f32 + 3.5, z as f32 + 0.5),
+        LAMP_LIGHT,
+        LAMP_INTENSITY,
+        BLOCK_RADIUS,
+    )
+}
+
+// Portal en ruinas como los de Minecraft. El marco de obsidiana queda completo (y el
+// portal encendido) mirando hacia afuera de la isla; la ruina queda de ese lado, para
+// que se vea desde afuera del diorama: plaza rota, magma que brilla en el suelo,
+// restos de ladrillos y netherrack, y netherrack que se extiende por el pasto.
+// Devuelve las luces del portal y del magma
+fn build_portal(
+    map: &mut HeightMap,
+    world: &mut World,
+    blocks: &Palette,
+    angle: f32,
+    rng: &mut Rng,
+) -> Vec<Light> {
+    let (qx, qz) = around_center(angle, 6.0);
     let floor = map.get(qx, qz).map_or(2, |column| column.surface);
 
-    for x in qx - 4..=qx + 3 {
-        for z in qz - 1..=qz + 2 {
-            map.set_surface(x, z, floor, Some(blocks.stone_bricks));
+    // Ejes locales: `forward` apunta hacia afuera de la isla (por el eje mas cercano
+    // a esa direccion) y `side` va a lo largo del marco. La celda local (a, b) esta
+    // `a` bloques de lado y `b` bloques hacia afuera del centro del portal
+    let forward = if angle.cos().abs() >= angle.sin().abs() {
+        (angle.cos().signum() as i32, 0)
+    } else {
+        (0, angle.sin().signum() as i32)
+    };
+    let side = (forward.1.abs(), forward.0.abs());
+    let at = |a: i32, b: i32| (qx + side.0 * a + forward.0 * b, qz + side.1 * a + forward.1 * b);
+
+    // El netherrack se extiende por el pasto del lado de afuera, mas denso cerca de la plaza
+    let (rx, rz) = at(0, 2);
+    for x in rx - 6..=rx + 6 {
+        for z in rz - 6..=rz + 6 {
+            let (dx, dz) = (x - rx, z - rz);
+            let outward = dx * forward.0 + dz * forward.1;
+            let distance = ((dx * dx + dz * dz) as f32).sqrt();
+            let chance = 0.85 * (1.0 - distance / RUIN_RADIUS);
+            let Some(column) = map.get(x, z) else {
+                continue;
+            };
+            if outward >= -1 && column.top.is_none() && rng.next_f32() < chance {
+                map.set_surface(x, z, column.surface, Some(blocks.netherrack));
+            }
         }
     }
 
-    // Marco de obsidiana de 4x5 en la fila de atras, con el portal de 2x3 adentro
-    let back = qz - 1;
-    for x in qx - 2..=qx + 1 {
-        for y in floor + 1..=floor + 5 {
-            let is_frame = x == qx - 2 || x == qx + 1 || y == floor + 1 || y == floor + 5;
-            let block = if is_frame { blocks.obsidian } else { blocks.portal };
-            world.set(x, y, back, block);
+    // Plaza rota de 8x4 que sale del marco hacia afuera: ladrillos de piedra con
+    // pedazos de netherrack
+    for a in -4..=3 {
+        for b in 0..=3 {
+            let (x, z) = at(a, b);
+            let top = if rng.next_f32() < 0.3 { blocks.netherrack } else { blocks.stone_bricks };
+            map.set_surface(x, z, floor, Some(top));
         }
     }
 
-    // La luz del portal va un poco enfrente de su cara, del lado de la plaza, para
-    // que el propio portal no la tape
-    let mut lights = vec![Light::point(
-        Vec3::new(qx as f32, floor as f32 + 3.5, back as f32 + 1.3),
-        PORTAL_LIGHT,
-        PORTAL_INTENSITY,
-        0.0,
-    )];
-
-    // Postes de tablas de 2 de alto con la lampara arriba; la luz sale del centro
-    // de la lampara
-    for x in [qx - 4, qx + 3] {
-        world.set(x, floor + 1, qz, blocks.planks);
-        world.set(x, floor + 2, qz, blocks.planks);
-        world.set(x, floor + 3, qz, blocks.lamp);
+    // Magma en el suelo de la plaza; cada bloque ilumina desde un poco por encima de el
+    let mut lights = Vec::new();
+    for (a, b) in [(-3, 2), (2, 2), (-1, 3), (3, 3)] {
+        let (x, z) = at(a, b);
+        map.set_surface(x, z, floor, Some(blocks.magma));
         lights.push(Light::point(
-            Vec3::new(x as f32 + 0.5, floor as f32 + 3.5, qz as f32 + 0.5),
-            LAMP_LIGHT,
-            LAMP_INTENSITY,
+            Vec3::new(x as f32 + 0.5, floor as f32 + 1.4, z as f32 + 0.5),
+            MAGMA_LIGHT,
+            MAGMA_INTENSITY,
             BLOCK_RADIUS,
         ));
     }
+
+    // Marco completo de obsidiana de 4x5 con el portal de 2x3 adentro
+    for a in -2..=1 {
+        for y in floor + 1..=floor + 5 {
+            let is_frame = a == -2 || a == 1 || y == floor + 1 || y == floor + 5;
+            let (x, z) = at(a, 0);
+            world.set(x, y, z, if is_frame { blocks.obsidian } else { blocks.portal });
+        }
+    }
+
+    // Restos de la ruina (la obsidiana es solo del marco): un pilar roto de ladrillos
+    // junto al marco, con netherrack arriba, y pedazos tirados en la plaza
+    let (x, z) = at(2, 0);
+    world.set(x, floor + 1, z, blocks.stone_bricks);
+    world.set(x, floor + 2, z, blocks.stone_bricks);
+    world.set(x, floor + 3, z, blocks.netherrack);
+    for (a, b, block) in [
+        (3, 0, blocks.stone_bricks),
+        (-3, 0, blocks.netherrack),
+        (-4, 3, blocks.stone_bricks),
+        (1, 3, blocks.netherrack),
+        (3, 1, blocks.netherrack),
+    ] {
+        let (x, z) = at(a, b);
+        world.set(x, floor + 1, z, block);
+    }
+
+    // La luz del portal va enfrente de su cara de afuera, entre sus dos columnas
+    let (x0, z0) = at(-1, 0);
+    let (x1, z1) = at(0, 0);
+    let center_x = (x0 + x1) as f32 / 2.0 + 0.5 + forward.0 as f32 * 1.3;
+    let center_z = (z0 + z1) as f32 / 2.0 + 0.5 + forward.1 as f32 * 1.3;
+    lights.push(Light::point(
+        Vec3::new(center_x, floor as f32 + 3.5, center_z),
+        PORTAL_LIGHT,
+        PORTAL_INTENSITY,
+        0.0,
+    ));
     lights
 }
 
-// Arbol de sakura en la cima: tronco de 2x2 y una copa rosada ancha e irregular
+// Un bulto redondeado de hojas de la copa
+struct Blob {
+    center: (f32, f32, f32),
+    radius: f32,
+    height: f32,
+}
+
+// Arbol de sakura en la cima: tronco de 2x2, cuatro ramas que salen hacia los lados
+// y varias copas redondas encimadas, con petalos colgando por debajo
 fn grow_cherry_tree(map: &mut HeightMap, world: &mut World, blocks: &Palette, rng: &mut Rng) {
     let trunk = [(-1, -1), (0, -1), (-1, 0), (0, 0)];
     let ground = trunk
@@ -374,29 +493,114 @@ fn grow_cherry_tree(map: &mut HeightMap, world: &mut World, blocks: &Palette, rn
         map.set_surface(x, z, ground, None);
     }
 
-    let trunk_top = ground + 7;
-    let canopy_y = trunk_top + 1;
-    let (radius, height) = (5.5_f32, 2.8_f32);
+    let trunk_top = ground + 6;
+    let top = trunk_top as f32;
 
-    for y in canopy_y - 2..=canopy_y + 3 {
-        for x in -6..6 {
-            for z in -6..6 {
+    // Copa principal encima del tronco y una copa al final de cada rama
+    let mut blobs = vec![Blob {
+        center: (0.0, top + 3.0, 0.0),
+        radius: 4.5,
+        height: 2.8,
+    }];
+    let mut branches = Vec::new();
+    let first_angle = rng.next_f32() * TAU;
+    for branch in 0..4 {
+        let angle = first_angle + branch as f32 * TAU / 4.0 + (rng.next_f32() - 0.5) * 0.6;
+        let (dx, dz) = (angle.cos(), angle.sin());
+        let reach = 3.8 + rng.next_f32();
+
+        // La rama sube en diagonal desde la punta del tronco
+        for step in 1..=3 {
+            let t = step as f32 / 3.0;
+            branches.push((dx * reach * t, top + 0.8 * step as f32, dz * reach * t));
+        }
+        blobs.push(Blob {
+            center: (dx * reach, top + 2.2 + rng.next_f32(), dz * reach),
+            radius: 3.0 + 0.6 * rng.next_f32(),
+            height: 2.1,
+        });
+    }
+
+    // Hojas: todo lo que cae dentro de algun bulto, con la orilla irregular
+    for y in trunk_top - 1..=trunk_top + 7 {
+        for x in -9..9 {
+            for z in -9..9 {
                 // Centro del bloque medido desde el centro del tronco (esquina 0, 0)
-                let (fx, fz) = (x as f32 + 0.5, z as f32 + 0.5);
-                let fy = (y - canopy_y) as f32;
-                let d = (fx * fx + fz * fz) / (radius * radius) + (fy * fy) / (height * height);
-                // Borde irregular: cada bloque de la orilla entra o no segun el azar
-                if d < 1.0 - 0.3 * rng.next_f32() {
+                let (fx, fy, fz) = (x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5);
+                let inside = blobs.iter().any(|blob| {
+                    let (cx, cy, cz) = blob.center;
+                    let horizontal = ((fx - cx).powi(2) + (fz - cz).powi(2)) / blob.radius.powi(2);
+                    let vertical = (fy - cy).powi(2) / blob.height.powi(2);
+                    horizontal + vertical < 1.0
+                });
+                if inside && rng.next_f32() > 0.08 && world.get(x, y, z) == AIR {
                     world.set(x, y, z, blocks.cherry_leaves);
                 }
             }
         }
     }
 
-    // El tronco va despues para reemplazar las hojas que caen en sus columnas
+    // Petalos colgando: debajo de algunas columnas de la copa cuelgan 1 a 3 hojas
+    for x in -9..9 {
+        for z in -9..9 {
+            let lowest = (trunk_top - 1..=trunk_top + 7)
+                .find(|&y| world.get(x, y, z) == blocks.cherry_leaves);
+            let Some(lowest) = lowest else {
+                continue;
+            };
+            if rng.next_f32() < 0.3 {
+                let length = 1 + (rng.next_f32() * 3.0) as i32;
+                for y in lowest - length..lowest {
+                    if world.get(x, y, z) == AIR {
+                        world.set(x, y, z, blocks.cherry_leaves);
+                    }
+                }
+            }
+        }
+    }
+
+    // Tronco y ramas al final, para reemplazar las hojas que caen donde van
     for &(x, z) in &trunk {
         for y in ground + 1..=trunk_top {
             world.set(x, y, z, blocks.log);
+        }
+    }
+    for (x, y, z) in branches {
+        world.set(x.floor() as i32, y.floor() as i32, z.floor() as i32, blocks.log);
+    }
+}
+
+// Que tan seguido crece algo sobre un bloque de pasto libre
+const FLOWER_CHANCE: f32 = 0.09;
+const GRASS_TUFT_CHANCE: f32 = 0.14;
+
+// Flores y pasto alto sobre el pasto que quedo libre (no en la plaza, el puesto,
+// ni debajo de otros bloques). Las flores moradas son las mas comunes, como en la foto
+fn scatter_plants(map: &HeightMap, world: &mut World, blocks: &Palette, rng: &mut Rng) {
+    for z in -HALF_SIZE..HALF_SIZE {
+        for x in -HALF_SIZE..HALF_SIZE {
+            let Some(column) = map.get(x, z) else {
+                continue;
+            };
+            let above = column.surface + 1;
+            if column.top.is_some() || world.get(x, above, z) != AIR {
+                continue;
+            }
+
+            let roll = rng.next_f32();
+            if roll < FLOWER_CHANCE {
+                let kind = rng.next_f32();
+                let flower = if kind < 0.55 {
+                    blocks.flowers[0]
+                } else if kind < 0.8 {
+                    blocks.flowers[1]
+                } else {
+                    blocks.flowers[2]
+                };
+                world.set(x, above, z, flower);
+            } else if roll < FLOWER_CHANCE + GRASS_TUFT_CHANCE {
+                world.set(x, above, z, blocks.grass_tuft);
+            }
         }
     }
 }
@@ -423,8 +627,8 @@ pub fn generate(seed: u64) -> Island {
     let pond_angle = rng.next_f32() * TAU;
     let portal_angle = pond_angle + TAU / 3.0;
     let water = carve_pond(&mut map, &blocks, pond_angle);
-    let lights = build_portal(&mut map, &mut world, &blocks, portal_angle);
-    build_stall(&mut map, &mut world, &blocks, portal_angle + TAU / 2.0);
+    let mut lights = build_portal(&mut map, &mut world, &blocks, portal_angle, &mut rng);
+    lights.extend(build_stall(&mut map, &mut world, &blocks, portal_angle + TAU / 2.0));
     grow_cherry_tree(&mut map, &mut world, &blocks, &mut rng);
 
     // Capas de cada columna: pasto arriba, tierra debajo y piedra hasta el fondo
@@ -450,24 +654,26 @@ pub fn generate(seed: u64) -> Island {
         world.set(x, y, z, block);
     }
 
+    scatter_plants(&map, &mut world, &blocks, &mut rng);
+
     Island { world, lights }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::AIR;
 
     #[test]
-    fn el_portal_y_las_dos_lamparas_emiten_luz() {
+    fn el_portal_el_magma_y_los_faroles_emiten_luz() {
         let island = generate(11);
-        assert_eq!(island.lights.len(), 3);
-        // Cada luz esta pegada a un bloque emisivo
+        // Portal, 4 bloques de magma y 2 faroles
+        assert_eq!(island.lights.len(), 7);
+        // Cada luz esta pegada a un bloque (el que la emite)
         for light in &island.lights {
             let p = light.position;
-            let near_emissive = (-1..=1).any(|dz| {
-                let block = island.world.get(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32 + dz);
-                block != AIR
+            let (x, y, z) = (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+            let near_emissive = (-1..=1).any(|dx| {
+                (-1..=1).any(|dy| (-1..=1).any(|dz| island.world.get(x + dx, y + dy, z + dz) != AIR))
             });
             assert!(near_emissive);
         }

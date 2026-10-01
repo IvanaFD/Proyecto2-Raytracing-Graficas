@@ -28,6 +28,9 @@ fn hash(x: usize, y: usize, seed: u32) -> f32 {
 #[derive(Debug, PartialEq)]
 pub struct Texture {
     pixels: [Color; TEXTURE_SIZE * TEXTURE_SIZE],
+    // Solo los sprites (flores, pasto) tienen partes transparentes: false = no hay
+    // nada en ese pixel y el rayo pasa de largo
+    mask: Option<[bool; TEXTURE_SIZE * TEXTURE_SIZE]>,
 }
 
 impl Texture {
@@ -41,15 +44,43 @@ impl Texture {
                 pixels[y * TEXTURE_SIZE + x] = pixel(x, y) * shade;
             }
         }
-        Texture { pixels }
+        Texture { pixels, mask: None }
+    }
+
+    // Sprite con transparencia: `pixel` devuelve None donde no hay nada. Sin borde
+    // oscurecido, porque no es la cara de un bloque
+    fn sprite(pixel: impl Fn(usize, usize) -> Option<Color>) -> Self {
+        let mut pixels = [Color::default(); TEXTURE_SIZE * TEXTURE_SIZE];
+        let mut mask = [false; TEXTURE_SIZE * TEXTURE_SIZE];
+        for y in 0..TEXTURE_SIZE {
+            for x in 0..TEXTURE_SIZE {
+                if let Some(color) = pixel(x, y) {
+                    pixels[y * TEXTURE_SIZE + x] = color;
+                    mask[y * TEXTURE_SIZE + x] = true;
+                }
+            }
+        }
+        Texture {
+            pixels,
+            mask: Some(mask),
+        }
+    }
+
+    fn texel_index(u: f32, v: f32) -> usize {
+        let x = ((u * TEXTURE_SIZE as f32) as usize).min(TEXTURE_SIZE - 1);
+        let y = ((v * TEXTURE_SIZE as f32) as usize).min(TEXTURE_SIZE - 1);
+        y * TEXTURE_SIZE + x
+    }
+
+    // Si en (u, v) hay algo; en una textura sin mascara siempre
+    pub fn is_opaque(&self, u: f32, v: f32) -> bool {
+        self.mask.is_none_or(|mask| mask[Self::texel_index(u, v)])
     }
 
     // Nearest neighbor: toma el pixel mas cercano sin mezclar, para que se
     // conserve el estilo pixelado. u y v van de 0 a 1, con v = 0 arriba
     pub fn sample(&self, u: f32, v: f32) -> Color {
-        let x = ((u * TEXTURE_SIZE as f32) as usize).min(TEXTURE_SIZE - 1);
-        let y = ((v * TEXTURE_SIZE as f32) as usize).min(TEXTURE_SIZE - 1);
-        self.pixels[y * TEXTURE_SIZE + x]
+        self.pixels[Self::texel_index(u, v)]
     }
 }
 
@@ -121,6 +152,16 @@ impl BlockTextures {
     }
 }
 
+// Una planta usa el mismo sprite en sus dos planos cruzados
+fn plant(pixel: impl Fn(usize, usize) -> Option<Color>) -> BlockTextures {
+    BlockTextures {
+        top: Texture::sprite(&pixel),
+        side: Texture::sprite(&pixel),
+        bottom: Texture::sprite(&pixel),
+        normal_map: None,
+    }
+}
+
 fn same_on_all_faces(pixel: impl Fn(usize, usize) -> Color) -> BlockTextures {
     BlockTextures {
         top: Texture::from_fn(&pixel),
@@ -149,6 +190,14 @@ const LAMP_YELLOW: Color = Color::from_rgb(255, 214, 120);
 const FOAM_WHITE: Color = Color::from_rgb(214, 232, 255);
 const WOOL_BLUE: Color = Color::from_rgb(52, 84, 190);
 const WOOL_WHITE: Color = Color::from_rgb(234, 236, 236);
+const NETHERRACK_RED: Color = Color::from_rgb(112, 44, 44);
+const MAGMA_DARK: Color = Color::from_rgb(58, 22, 16);
+const MAGMA_GLOW: Color = Color::from_rgb(255, 128, 32);
+const STEM_GREEN: Color = Color::from_rgb(58, 128, 40);
+const TUFT_GREEN: Color = Color::from_rgb(92, 158, 58);
+const ALLIUM_PURPLE: Color = Color::from_rgb(178, 110, 230);
+const POPPY_RED: Color = Color::from_rgb(220, 40, 36);
+const DANDELION_YELLOW: Color = Color::from_rgb(250, 214, 50);
 const LAMP_FRAME: Color = Color::from_rgb(92, 58, 30);
 const BRICK_GRAY: Color = Color::from_rgb(122, 122, 122);
 
@@ -290,6 +339,74 @@ fn waterfall(x: usize, y: usize) -> Color {
     }
 }
 
+// Netherrack: roca roja del Nether, grumosa, con manchas oscuras
+fn netherrack(x: usize, y: usize) -> Color {
+    let lump = 0.75 + 0.35 * hash(x / 2, y / 2, 31);
+    let grain = 0.9 + 0.15 * hash(x, y, 32);
+    let pit = if hash(x, y, 33) < 0.1 { 0.6 } else { 1.0 };
+    NETHERRACK_RED * (lump * grain * pit)
+}
+
+// Magma: roca oscura con grietas de lava naranja que brillan
+fn magma(x: usize, y: usize) -> Color {
+    // Las grietas siguen lineas que se tuercen con ruido
+    let crack = ((x as f32 * 0.8 + 3.0 * hash(x / 4, y / 4, 34)).sin()
+        * (y as f32 * 0.7 + 3.0 * hash(y / 4, x / 4, 35)).cos())
+    .abs();
+    if crack < 0.25 {
+        MAGMA_GLOW * (0.85 + 0.3 * hash(x, y, 36))
+    } else {
+        MAGMA_DARK * (0.8 + 0.4 * hash(x, y, 37))
+    }
+}
+
+// ---------- Sprites de plantas (None = transparente) ----------
+
+// Tallo de 2 pixeles de ancho que sube desde abajo hasta `top`
+fn stem(x: usize, y: usize, top: usize) -> Option<Color> {
+    ((x == 7 || x == 8) && y >= top).then(|| STEM_GREEN * (0.85 + 0.2 * hash(x, y, 41)))
+}
+
+// Allium: una bola morada arriba de un tallo alto (las flores lilas de la foto)
+fn allium(x: usize, y: usize) -> Option<Color> {
+    let (dx, dy) = (x as f32 - 7.5, y as f32 - 4.5);
+    if dx * dx + dy * dy < 12.0 {
+        Some(ALLIUM_PURPLE * (0.75 + 0.4 * hash(x, y, 42)))
+    } else {
+        stem(x, y, 7)
+    }
+}
+
+// Amapola: petalos rojos con el centro oscuro
+fn poppy(x: usize, y: usize) -> Option<Color> {
+    let petals = (5..=10).contains(&x) && (5..=9).contains(&y);
+    let center = (7..=8).contains(&x) && (6..=7).contains(&y);
+    if center {
+        Some(Color::from_rgb(40, 20, 16))
+    } else if petals {
+        Some(POPPY_RED * (0.8 + 0.3 * hash(x, y, 43)))
+    } else {
+        stem(x, y, 10)
+    }
+}
+
+// Diente de leon: una cabeza amarilla pequena
+fn dandelion(x: usize, y: usize) -> Option<Color> {
+    let head = (6..=9).contains(&x) && (8..=10).contains(&y);
+    if head {
+        Some(DANDELION_YELLOW * (0.85 + 0.25 * hash(x, y, 44)))
+    } else {
+        stem(x, y, 11)
+    }
+}
+
+// Pasto alto: hojas de distinta altura en columnas alternadas
+fn grass_tuft(x: usize, y: usize) -> Option<Color> {
+    let height = 5 + (hash(x, 0, 45) * 9.0) as usize;
+    let is_blade = x % 2 == (x / 4) % 2 && y >= TEXTURE_SIZE - height;
+    is_blade.then(|| TUFT_GREEN * (0.75 + 0.35 * hash(x, y, 46)))
+}
+
 // Lana: tejido suave con un poco de grano, para el toldo del puesto
 fn wool(color: Color) -> impl Fn(usize, usize) -> Color {
     move |x, y| {
@@ -328,6 +445,12 @@ pub struct TextureSet {
     pub waterfall: BlockTextures,
     pub blue_wool: BlockTextures,
     pub white_wool: BlockTextures,
+    pub netherrack: BlockTextures,
+    pub magma: BlockTextures,
+    pub allium: BlockTextures,
+    pub poppy: BlockTextures,
+    pub dandelion: BlockTextures,
+    pub grass_tuft: BlockTextures,
 }
 
 impl TextureSet {
@@ -359,6 +482,12 @@ impl TextureSet {
             waterfall: same_on_all_faces(waterfall),
             blue_wool: same_on_all_faces(wool(WOOL_BLUE)),
             white_wool: same_on_all_faces(wool(WOOL_WHITE)),
+            netherrack: same_on_all_faces(netherrack).with_normal_map(STONE_RELIEF),
+            magma: same_on_all_faces(magma),
+            allium: plant(allium),
+            poppy: plant(poppy),
+            dandelion: plant(dandelion),
+            grass_tuft: plant(grass_tuft),
         }
     }
 }
@@ -407,6 +536,16 @@ mod tests {
         assert!(normal.x < 0.0);
         assert!(normal.y.abs() < 1e-6);
         assert!((normal.length() - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn los_sprites_tienen_partes_transparentes() {
+        let flower = &textures().allium.side;
+        // La esquina de arriba esta vacia y el tallo abajo al centro existe
+        assert!(!flower.is_opaque(0.02, 0.02));
+        assert!(flower.is_opaque(7.5 / 16.0, 14.5 / 16.0));
+        // Un bloque normal es opaco en todos lados
+        assert!(textures().stone.side.is_opaque(0.02, 0.02));
     }
 
     #[test]
