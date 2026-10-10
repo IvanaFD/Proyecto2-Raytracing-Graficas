@@ -46,9 +46,6 @@ struct Palette {
     white_wool: BlockId,
     netherrack: BlockId,
     magma: BlockId,
-    // Plantas: flores (moradas como las de la foto, rojas y amarillas) y pasto alto
-    flowers: [BlockId; 3],
-    grass_tuft: BlockId,
 }
 
 impl Palette {
@@ -57,27 +54,12 @@ impl Palette {
     // El color base es el tono promedio del bloque; lo que se ve es la textura
     fn register(world: &mut World) -> Self {
         let t = textures();
-
-        // Plantas: dos planos cruzados con partes transparentes. Sin especular: vistos
-        // de canto, el brillo haria lineas claras
-        let plant = |color: Color, textures| {
-            Material::new(color, 1.0, [0.95, 0.0, 0.0, 0.0], 1.0).textured(textures)
-        };
-        let flowers = [
-            world.add_plant(plant(Color::from_rgb(178, 110, 230), &t.allium)),
-            world.add_plant(plant(Color::from_rgb(220, 40, 36), &t.poppy)),
-            world.add_plant(plant(Color::from_rgb(250, 214, 50), &t.dandelion)),
-        ];
-        let grass_tuft = world.add_plant(plant(Color::from_rgb(92, 158, 58), &t.grass_tuft));
-
         let mut add = |color: Color, specular: f32, albedo: [f32; 4], ior: f32, emission: f32, textures| {
             let material = Material::new(color, specular, albedo, ior).emissive(emission);
             world.add_material(material.textured(textures))
         };
 
         Palette {
-            flowers,
-            grass_tuft,
             grass: add(Color::from_rgb(106, 170, 64), 10.0, [0.9, 0.1, 0.0, 0.0], 1.0, 0.0, &t.grass),
             dirt: add(Color::from_rgb(134, 96, 67), 5.0, [0.95, 0.05, 0.0, 0.0], 1.0, 0.0, &t.dirt),
             stone: add(Color::from_rgb(128, 128, 128), 30.0, [0.8, 0.25, 0.0, 0.0], 1.0, 0.0, &t.stone),
@@ -570,41 +552,6 @@ fn grow_cherry_tree(map: &mut HeightMap, world: &mut World, blocks: &Palette, rn
     }
 }
 
-// Que tan seguido crece algo sobre un bloque de pasto libre
-const FLOWER_CHANCE: f32 = 0.09;
-const GRASS_TUFT_CHANCE: f32 = 0.14;
-
-// Flores y pasto alto sobre el pasto que quedo libre (no en la plaza, el puesto,
-// ni debajo de otros bloques). Las flores moradas son las mas comunes, como en la foto
-fn scatter_plants(map: &HeightMap, world: &mut World, blocks: &Palette, rng: &mut Rng) {
-    for z in -HALF_SIZE..HALF_SIZE {
-        for x in -HALF_SIZE..HALF_SIZE {
-            let Some(column) = map.get(x, z) else {
-                continue;
-            };
-            let above = column.surface + 1;
-            if column.top.is_some() || world.get(x, above, z) != AIR {
-                continue;
-            }
-
-            let roll = rng.next_f32();
-            if roll < FLOWER_CHANCE {
-                let kind = rng.next_f32();
-                let flower = if kind < 0.55 {
-                    blocks.flowers[0]
-                } else if kind < 0.8 {
-                    blocks.flowers[1]
-                } else {
-                    blocks.flowers[2]
-                };
-                world.set(x, above, z, flower);
-            } else if roll < FLOWER_CHANCE + GRASS_TUFT_CHANCE {
-                world.set(x, above, z, blocks.grass_tuft);
-            }
-        }
-    }
-}
-
 // La isla generada: sus bloques y las luces de sus bloques emisivos
 pub struct Island {
     pub world: World,
@@ -653,8 +600,6 @@ pub fn generate(seed: u64) -> Island {
     for (x, y, z, block) in water {
         world.set(x, y, z, block);
     }
-
-    scatter_plants(&map, &mut world, &blocks, &mut rng);
 
     Island { world, lights }
 }
