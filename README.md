@@ -1,6 +1,6 @@
 # Diorama Minecraft — Raytracer en Rust
 
-Raytracer en CPU que dibuja un archipiélago de islas flotantes al estilo de Minecraft. Todo el raytracing, las matemáticas, las texturas y el terreno están hechos a mano con la librería estándar de Rust. Raylib solo abre la ventana, muestra la imagen y lee el teclado.
+Raytracer en CPU que dibuja un archipiélago de islas flotantes al estilo de Minecraft. Todo el raytracing, las matemáticas, las texturas y el terreno están hechos a mano con la librería estándar de Rust. 
 
 ## Video
 
