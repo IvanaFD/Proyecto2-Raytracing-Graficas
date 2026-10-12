@@ -42,7 +42,7 @@ const ZOOM_SPEED: f32 = 0.8;
 // (4 veces menos rayos); al soltar las teclas se traza a resolucion completa
 const MOVING_SCALE: usize = 2;
 
-// Semilla de la isla al abrir el programa
+// Semilla del archipielago al abrir el programa
 const INITIAL_SEED: u64 = 2026;
 
 // Direccion hacia el sol: bajo en el horizonte, como al atardecer. La usan el
@@ -57,10 +57,10 @@ const SKY_LIGHT_DISTANCE: f32 = 300.0;
 const SUNSET_AMBIENT: Color = Color::new(0.3, 0.22, 0.34);
 const NIGHT_AMBIENT: Color = Color::new(0.06, 0.07, 0.13);
 
-// Genera la isla y arma la lista de objetos y de luces de la escena. Todo el
+// Genera el archipielago y arma la lista de objetos y de luces de la escena. Todo el
 // mundo es un solo objeto: el DDA ya sabe donde esta cada bloque
 fn build_island(seed: u64, sky_light: Light) -> (Vec<Box<dyn RayIntersect>>, Vec<Light>) {
-    println!("Isla generada con la semilla {seed}");
+    println!("Archipielago generado con la semilla {seed}");
     let island = terrain::generate(seed);
     // La primera luz siempre es la del cielo (sol o luna)
     let mut lights = vec![sky_light];
@@ -180,7 +180,7 @@ fn main() {
         WINDOW_HEIGHT as usize,
     );
 
-    // La isla se genera a partir de una semilla; con G se genera otra
+    // El archipielago se genera a partir de una semilla; con G se genera otro
     let mut seed = INITIAL_SEED;
     let mut night = false;
 

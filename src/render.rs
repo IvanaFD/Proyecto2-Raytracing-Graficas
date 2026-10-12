@@ -94,15 +94,14 @@ pub struct Scene {
 // del mapa esta en espacio tangente y se pasa al mundo con la base TBN de la cara:
 // N' = T * n.x + B * n.y + N * n.z
 fn apply_normal_map(intersect: &mut Intersect) {
-    let normal_map = intersect
+    let tangent_normal = intersect
         .material
         .textures
-        .and_then(|textures| textures.normal_map.as_ref());
-    let Some(normal_map) = normal_map else {
+        .and_then(|textures| textures.normal_at(&intersect.normal, intersect.uv));
+    let Some(tangent_normal) = tangent_normal else {
         return;
     };
 
-    let tangent_normal = normal_map.sample(intersect.uv.0, intersect.uv.1);
     let (tangent, bitangent) = face_tangents(&intersect.normal);
     intersect.normal = (tangent * tangent_normal.x
         + bitangent * tangent_normal.y

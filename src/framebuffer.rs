@@ -47,14 +47,6 @@ impl Framebuffer {
         &mut self.pixels
     }
 
-    #[allow(dead_code)]
-    pub fn clear(&mut self, rgb: [u8; 3]) {
-        for pixel in self.pixels.chunks_exact_mut(CHANNELS) {
-            pixel.copy_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
-        }
-        self.dirty = true;
-    }
-
     // Muestra la imagen trazada, con una barra arriba con `help` (una linea de texto
     // por renglon) y los FPS abajo a la izquierda
     pub fn present(&mut self, window: &mut RaylibHandle, raylib_thread: &RaylibThread, help: &[&str]) {

@@ -9,6 +9,8 @@ pub const TEXTURE_SIZE: usize = 16;
 // Fuerza del relieve de los mapas normales (mas alto = pendientes mas marcadas)
 const STONE_RELIEF: f32 = 6.0;
 const BRICK_RELIEF: f32 = 5.0;
+// Relieve suave para tierra, madera, hojas, nieve y hongos
+const SOFT_RELIEF: f32 = 3.0;
 
 // Oscurece apenas el anillo de pixeles del borde: casi no se nota, pero ayuda a
 // distinguir donde termina un bloque y empieza el siguiente
@@ -99,26 +101,42 @@ pub struct BlockTextures {
     pub top: Texture,
     pub side: Texture,
     pub bottom: Texture,
-    // Relieve de la superficie; el mismo en todas las caras
-    pub normal_map: Option<NormalMap>,
+    // Relieve de cada cara (arriba, lados, abajo), calculado de su propia textura
+    pub normal_maps: Option<[NormalMap; 3]>,
+}
+
+// Que cara del bloque es segun su normal: 0 arriba, 1 lados, 2 abajo
+fn face_of(normal: &Vec3) -> usize {
+    if normal.y > 0.5 {
+        0
+    } else if normal.y < -0.5 {
+        2
+    } else {
+        1
+    }
 }
 
 impl BlockTextures {
     pub fn sample(&self, normal: &Vec3, uv: (f32, f32)) -> Color {
-        let texture = if normal.y > 0.5 {
-            &self.top
-        } else if normal.y < -0.5 {
-            &self.bottom
-        } else {
-            &self.side
-        };
+        let texture = [&self.top, &self.side, &self.bottom][face_of(normal)];
         texture.sample(uv.0, uv.1)
     }
 
-    // Le da relieve al bloque a partir de su textura de los lados
+    // Normal del mapa normal (en espacio tangente) de esa cara, si el bloque tiene relieve
+    pub fn normal_at(&self, normal: &Vec3, uv: (f32, f32)) -> Option<Vec3> {
+        self.normal_maps
+            .as_ref()
+            .map(|maps| maps[face_of(normal)].sample(uv.0, uv.1))
+    }
+
+    // Le da relieve a cada cara a partir de su propia textura
     fn with_normal_map(self, strength: f32) -> Self {
-        let normal_map = Some(NormalMap::from_texture(&self.side, strength));
-        BlockTextures { normal_map, ..self }
+        let normal_maps = Some([
+            NormalMap::from_texture(&self.top, strength),
+            NormalMap::from_texture(&self.side, strength),
+            NormalMap::from_texture(&self.bottom, strength),
+        ]);
+        BlockTextures { normal_maps, ..self }
     }
 }
 
@@ -127,7 +145,7 @@ fn same_on_all_faces(pixel: impl Fn(usize, usize) -> Color) -> BlockTextures {
         top: Texture::from_fn(&pixel),
         side: Texture::from_fn(&pixel),
         bottom: Texture::from_fn(&pixel),
-        normal_map: None,
+        normal_maps: None,
     }
 }
 
@@ -666,7 +684,7 @@ fn three_faces(
         top: Texture::from_fn(top),
         side: Texture::from_fn(side),
         bottom: Texture::from_fn(bottom),
-        normal_map: None,
+        normal_maps: None,
     }
 }
 
@@ -714,20 +732,22 @@ impl TextureSet {
                 top: Texture::from_fn(grass_top),
                 side: Texture::from_fn(grass_side),
                 bottom: Texture::from_fn(dirt),
-                normal_map: None,
-            },
-            dirt: same_on_all_faces(dirt),
+                normal_maps: None,
+            }
+            .with_normal_map(SOFT_RELIEF),
+            dirt: same_on_all_faces(dirt).with_normal_map(SOFT_RELIEF),
             // La piedra y los ladrillos tienen relieve: grietas y juntas hundidas
             stone: same_on_all_faces(stone).with_normal_map(STONE_RELIEF),
-            sand: same_on_all_faces(sand),
+            sand: same_on_all_faces(sand).with_normal_map(SOFT_RELIEF),
             log: BlockTextures {
                 top: Texture::from_fn(log_top),
                 side: Texture::from_fn(log_side),
                 bottom: Texture::from_fn(log_top),
-                normal_map: None,
-            },
-            planks: same_on_all_faces(planks),
-            cherry_leaves: same_on_all_faces(cherry_leaves),
+                normal_maps: None,
+            }
+            .with_normal_map(SOFT_RELIEF),
+            planks: same_on_all_faces(planks).with_normal_map(SOFT_RELIEF),
+            cherry_leaves: same_on_all_faces(cherry_leaves).with_normal_map(SOFT_RELIEF),
             water: same_on_all_faces(water),
             obsidian: same_on_all_faces(obsidian),
             portal: same_on_all_faces(portal),
@@ -740,16 +760,16 @@ impl TextureSet {
             magma: same_on_all_faces(magma),
             sandstone: three_faces(sandstone_top, sandstone_side, sandstone_top)
                 .with_normal_map(STONE_RELIEF),
-            cactus: three_faces(cactus_top, cactus_side, cactus_top),
-            mycelium: three_faces(mycelium_top, mycelium_side, dirt),
+            cactus: three_faces(cactus_top, cactus_side, cactus_top).with_normal_map(SOFT_RELIEF),
+            mycelium: three_faces(mycelium_top, mycelium_side, dirt).with_normal_map(SOFT_RELIEF),
             mushroom_stem: same_on_all_faces(mushroom_stem),
-            red_cap: same_on_all_faces(red_cap),
-            brown_cap: same_on_all_faces(brown_cap),
-            snowy_grass: three_faces(snow, snowy_grass_side, dirt),
-            snow: same_on_all_faces(snow),
+            red_cap: same_on_all_faces(red_cap).with_normal_map(SOFT_RELIEF),
+            brown_cap: same_on_all_faces(brown_cap).with_normal_map(SOFT_RELIEF),
+            snowy_grass: three_faces(snow, snowy_grass_side, dirt).with_normal_map(SOFT_RELIEF),
+            snow: same_on_all_faces(snow).with_normal_map(SOFT_RELIEF),
             ice: same_on_all_faces(ice),
-            spruce_log: three_faces(spruce_top, spruce_side, spruce_top),
-            spruce_leaves: same_on_all_faces(spruce_leaves),
+            spruce_log: three_faces(spruce_top, spruce_side, spruce_top).with_normal_map(SOFT_RELIEF),
+            spruce_leaves: same_on_all_faces(spruce_leaves).with_normal_map(SOFT_RELIEF),
             glass: same_on_all_faces(glass),
             nether_bricks: same_on_all_faces(nether_bricks).with_normal_map(BRICK_RELIEF),
             blackstone: same_on_all_faces(blackstone).with_normal_map(STONE_RELIEF),

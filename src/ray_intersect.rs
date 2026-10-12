@@ -2,13 +2,11 @@ use crate::material::Material;
 use crate::vec3::Vec3;
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct Intersect {
-    // Punto y normal se usan desde la fase 6 (iluminacion)
     pub point: Vec3,
     pub normal: Vec3,
     pub distance: f32,
-    // Coordenadas de textura en [0,1]; se usan desde la fase 10
+    // Coordenadas de textura en [0,1]
     pub uv: (f32, f32),
     pub is_intersecting: bool,
     pub material: Material,
