@@ -8,6 +8,7 @@ mod material;
 mod ray_intersect;
 mod render;
 mod skybox;
+mod structures;
 mod terrain;
 mod texture;
 mod vec3;
@@ -34,7 +35,8 @@ const TITLE: &str = "Diorama Minecraft - Raytracer";
 
 // Velocidades por segundo, para que no dependan de los FPS
 const ROTATION_SPEED: f32 = 1.5;
-const ZOOM_SPEED: f32 = 8.0;
+// Fraccion de la distancia actual que se acerca o aleja por segundo
+const ZOOM_SPEED: f32 = 0.8;
 
 // Mientras la camara se mueve se lanza un rayo por cada bloque de 2x2 pixeles
 // (4 veces menos rayos); al soltar las teclas se traza a resolucion completa
@@ -78,6 +80,52 @@ fn sky_light(night: bool) -> Light {
     }
 }
 
+// Vista general: el centro del archipielago, lo bastante lejos para ver las 5 islas
+const OVERVIEW_CENTER: Vec3 = Vec3::new(0.0, 4.0, 0.0);
+const OVERVIEW_RADIUS: f32 = 95.0;
+// Cuanto se puede acercar la camara: en la vista general hasta la isla del portal y
+// en cada isla casi hasta su centro (sin colisiones: muy cerca puede quedar adentro
+// de un arbol o una casa)
+const OVERVIEW_MIN_RADIUS: f32 = 12.0;
+const FOCUS_MIN_RADIUS: f32 = 4.0;
+
+// Teclas que se muestran en la barra de arriba de la ventana
+const CONTROLS: [&str; 2] = [
+    "Flechas: girar/inclinar   W/S: zoom   0: vista general   1-5: islas",
+    "L: dia/noche   G: otras islas   N: relieve   T: 1 hilo/todos",
+];
+const MAX_RADIUS: f32 = 170.0;
+
+// 0 enfoca todo el archipielago; 1 a 5 enfocan cada isla. Devuelve si cambio algo
+fn handle_focus(window: &RaylibHandle, camera: &mut Camera) -> bool {
+    let keys = [
+        KeyboardKey::KEY_ONE,
+        KeyboardKey::KEY_TWO,
+        KeyboardKey::KEY_THREE,
+        KeyboardKey::KEY_FOUR,
+        KeyboardKey::KEY_FIVE,
+    ];
+
+    if window.is_key_pressed(KeyboardKey::KEY_ZERO) {
+        camera.center = OVERVIEW_CENTER;
+        camera.radius = OVERVIEW_RADIUS;
+        camera.min_radius = OVERVIEW_MIN_RADIUS;
+        println!("Vista general");
+        return true;
+    }
+
+    for (key, focus) in keys.iter().zip(terrain::FOCUS_POINTS.iter()) {
+        if window.is_key_pressed(*key) {
+            camera.center = focus.center;
+            camera.radius = focus.radius;
+            camera.min_radius = FOCUS_MIN_RADIUS;
+            println!("{}", focus.name);
+            return true;
+        }
+    }
+    false
+}
+
 // Mueve la camara segun las teclas presionadas. Devuelve si cambio algo
 fn handle_input(window: &RaylibHandle, camera: &mut Camera) -> bool {
     let delta_time = window.get_frame_time();
@@ -99,11 +147,12 @@ fn handle_input(window: &RaylibHandle, camera: &mut Camera) -> bool {
     if key(KeyboardKey::KEY_DOWN) {
         delta_pitch -= ROTATION_SPEED * delta_time;
     }
+    // El zoom es proporcional a la distancia: igual de comodo de cerca que de lejos
     if key(KeyboardKey::KEY_W) {
-        delta_zoom -= ZOOM_SPEED * delta_time;
+        delta_zoom -= ZOOM_SPEED * camera.radius * delta_time;
     }
     if key(KeyboardKey::KEY_S) {
-        delta_zoom += ZOOM_SPEED * delta_time;
+        delta_zoom += ZOOM_SPEED * camera.radius * delta_time;
     }
 
     if delta_yaw == 0.0 && delta_pitch == 0.0 && delta_zoom == 0.0 {
@@ -149,15 +198,15 @@ fn main() {
     // El cielo que no se esta usando; con L se intercambia con el de la escena
     let mut other_skybox = Skybox::night(MOON_DIRECTION);
 
+    // Arranca viendo todo el archipielago
     let mut camera = Camera {
-        // A media altura entre la parte de abajo de la isla y la copa del arbol
-        center: Vec3::new(0.0, 4.0, 0.0),
-        yaw: 0.6,
-        pitch: 0.35,
-        radius: 48.0,
-        // Suficiente para no meterse dentro de la isla ni de la copa
-        min_radius: 22.0,
-        max_radius: 90.0,
+        center: OVERVIEW_CENTER,
+        // Mirando entre la isla de sakura y la del desierto, con el portal al centro
+        yaw: 0.0,
+        pitch: 0.42,
+        radius: OVERVIEW_RADIUS,
+        min_radius: OVERVIEW_MIN_RADIUS,
+        max_radius: MAX_RADIUS,
         fov: 60.0_f32.to_radians(),
     };
 
@@ -198,7 +247,7 @@ fn main() {
             needs_full_render = true;
         }
 
-        let moved = handle_input(&window, &mut camera);
+        let moved = handle_focus(&window, &mut camera) | handle_input(&window, &mut camera);
 
         // Solo se vuelve a trazar si algo cambio
         let scale = if moved {
@@ -235,6 +284,6 @@ fn main() {
             }
         }
 
-        framebuffer.present(&mut window, &raylib_thread);
+        framebuffer.present(&mut window, &raylib_thread, &CONTROLS);
     }
 }

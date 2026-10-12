@@ -3,6 +3,11 @@ use raylib::prelude::*;
 // R, G, B, A
 pub const CHANNELS: usize = 4;
 
+// Texto de la barra de ayuda de arriba
+const HELP_FONT_SIZE: i32 = 18;
+const HELP_PADDING: i32 = 6;
+const HELP_MARGIN: i32 = 10;
+
 pub struct Framebuffer {
     pub width: usize,
     pub height: usize,
@@ -50,7 +55,9 @@ impl Framebuffer {
         self.dirty = true;
     }
 
-    pub fn present(&mut self, window: &mut RaylibHandle, raylib_thread: &RaylibThread) {
+    // Muestra la imagen trazada, con una barra arriba con `help` (una linea de texto
+    // por renglon) y los FPS abajo a la izquierda
+    pub fn present(&mut self, window: &mut RaylibHandle, raylib_thread: &RaylibThread, help: &[&str]) {
         if self.dirty {
             self.texture
                 .update_texture(&self.pixels)
@@ -60,6 +67,14 @@ impl Framebuffer {
 
         let screen_width = window.get_screen_width() as f32;
         let screen_height = window.get_screen_height() as f32;
+
+        // La letra se achica si algun renglon no cabe a lo ancho de la ventana
+        let max_width = screen_width as i32 - 2 * HELP_MARGIN;
+        let mut font_size = HELP_FONT_SIZE;
+        while font_size > 10 && help.iter().any(|text| window.measure_text(text, font_size) > max_width) {
+            font_size -= 1;
+        }
+        let line_height = font_size + 4;
 
         let mut render = window.begin_drawing(raylib_thread);
         render.clear_background(Color::BLACK);
@@ -75,6 +90,15 @@ impl Framebuffer {
             0.0,
             Color::WHITE,
         );
-        render.draw_fps(10, 10);
+
+        // Barra semitransparente para que el texto se lea sobre cualquier fondo
+        let bar_height = HELP_PADDING * 2 + line_height * help.len() as i32;
+        render.draw_rectangle(0, 0, screen_width as i32, bar_height, Color::new(0, 0, 0, 150));
+        for (line, text) in help.iter().enumerate() {
+            let y = HELP_PADDING + line_height * line as i32;
+            render.draw_text(text, HELP_MARGIN, y, font_size, Color::RAYWHITE);
+        }
+
+        render.draw_fps(10, screen_height as i32 - 26);
     }
 }
